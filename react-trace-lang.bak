@@ -19,21 +19,31 @@
   ;; Programs and component definitions are syntax only.
   ;; This model does not implement component lookup or instantiation.
   (P ::= (program (D ...) e))
-  (D ::= (let C x = e))
+  (D ::= (component C (x) e))
 
   ;; Expressions
-  (e ::= ()
-     true
-     false
+  (e ::=
+     unit
+     true false
      n
      x
-     (e op e)
+
+     (+ e e)
+     (- e e)
+     (= e e)
+
      (array e ...)
+
      (print e)
+
      (if e e e)
+
      (begin e e)
+
      (λ (x) e)
+
      (e e)
+
      (let ([x e]) e)
 
      ;; useState: (state l (x_state x_set) e_init e_body)
@@ -45,34 +55,39 @@
      ;; Setter value (appears at runtime after state is processed)
      (setter l))
 
-  (op + - * / < <= = > >= !=)
-
   ;; Values
   (v ::=
-     k
-     cl
-     C
-     cs
-     (s ...)
-     (l p))
+     unit
+     true
+     false
+     n
+     (λ (x) e)
+     (array v ...)
+     (setter l))
 
-  ;; ViewSpec
-  (s ::= k cl cs (s ...))
+  ;; Evaluation contexts for ordinary call-by-value reduction.
+  ;; (state ...) is NOT here; it's handled by the runtime rules.
+  (E ::=
+     hole
+     (+ E e) (+ v E)
+     (- E e) (- v E)
+     (= E e) (= v E)
+     (array v ... E e ...)
+     (print E)
+     (if E e e)
+     (begin E e)
+     (E e) (v E)
+     (let ([x E]) e))
 
-  ;; ComSpec
-  (cs ::= (C v))
+  ;; Evaluation context for state's initializer during Init phase.
+  ;; This lets us reduce e_init before processing the state form.
+  (E-init ::=
+          (state l (x_state x_set) E-init e_body)
+          E)
 
   (x C y ::= variable-not-otherwise-mentioned)
   (l ::= natural)
-  (n ::= number)
-  (p ::= natural)
-
-  (π ::= (view cs (d ...) ρ q t))
-  (d ::= Check Effect)
-  (ρ ::= ((v q) ...))  
-  (q ::= (cl ...))
-  (Σ ::= m π)
-  (m ::= ((p π) ...))
+  (n ::= integer)
 
   ;; Runtime configurations for the one-component model
 
@@ -84,107 +99,12 @@
   ;; Queue: maps Hook labels to lists of pending updater functions
   (Q ::= ((l (v ...)) ...))
 
-  #;(config ::=
+  (config ::=
           (render phase e σ Q)
           (check σ Q)
-          (done v σ Q))
+          (done v σ Q)))
 
-  (mode::= rendered check loop)
-
-  ;; Effect queue: ordered list of effect thunks (closures)
-  (ω () (ω (fun x -> e)))
-
-  ;; Render result outcome
-  (outcome Normal Throw)
-
-  ;; Stable marker
-  (status Stable Rerendering)
-
-  ;; Top-level configuration before StepInit: ⟨e, δ⟩
-  ;; δ is the external event queue (user events)
-  (δ () (δ event))
-  (event (click ι) (change ι v)) ; etc.
-
-  ;; Top-level configuration after: ⟨t, m, ω, δ, status⟩
-  (config (CONFIG t m ω δ status)))
-
-
-(define-judgment-form React-tRace
-  #:mode (step-init I O)
-  #:contract (step-init (e δ) (t m ω δ status))
-
-  [ ;;"StepInit"
-   (eval () () e Normal s () ω)        ;; [], [] ⊢ e ↓Normal s, [], ω
-   (init () s t m ω_prime)            ;; [] ⊢ init(s) = ⟨t, m, ω'⟩
-   -----------------------------------
-   (step-init (e δ)
-              (t m (append-ω ω ω_prime) δ Stable))])
-
-
-;; The append -|-|- helper function
-(define-metafunction React-tRace
-  append-ω : ω ω -> ω
-  [(append-ω · ω) ω]
-  [(append-ω (ω_1 (fun x -> e)) ω_2)
-   ((append-ω ω_1 ω_2) (fun x -> e))])
-
-
-(define-judgment-form React-tRace
-  #:mode (init I I I O O O)
-  #:contract (init m δ s t m ω)
-
-  ;; ── InitConst ─────────────────────────────────────────────
-  ;; Constants pass through; no memory change, no effects
-  [-------- "InitConst"
-   (init m δ k k m ·)]
-
-  ;; ── InitClos ──────────────────────────────────────────────
-  ;; Closures pass through the same way
-  [-------- "InitClos"
-   (init m δ cl cl m ·)]
-
-  ;; ── InitArray ─────────────────────────────────────────────
-  ;; Init each element left-to-right, threading memory through.
-  ;; Base case: empty array
-  [-------- "InitArray-Nil"
-   (init m δ (view ()) (view ()) m ·)]
-
-  ;; Inductive: init head, then tail with updated memory
-  [(init m_0 δ s_1 t_1 m_1 ω_1)
-   (init m_1 δ (view (s_rest ...)) (view (t_rest ...)) m_2 ω_2)
-   -------- "InitArray-Cons"
-   (init m_0 δ (view (s_1 s_rest ...))
-               (view (t_1 t_rest ...))
-               m_2
-               (append-ω ω_1 ω_2))]
-
-  ;; ── InitCom ───────────────────────────────────────────────
-  ;; Mount a component instance ⟨C, v⟩ into the tree.
-  [(fresh-path m p)                        ;; m ⊢ p fresh
-   (where (fun x -> e) (lookup-comp δ C)) ;; δ[C] = λx.e
-   ;; Build the initial node record π for this component
-   (where π_init (node-record (C v)       ;; spec: ⟨C, v⟩
-                               {}          ;; dec: {}
-                               ()          ;; sttst: []  (state list)
-                               ()          ;; effq: []   (effect queue)
-                               (view ()))) ;; child: ⟨⟩
-   ;; Evaluate the component body in Init phase
-   ;; with p allocated and π_init stored, env [x↦v]
-   (eval (extend-mem m p π_init)
-         (extend-env · x v)
-         e
-         Init                             ;; Init phase marker
-         p                                ;; current path
-         s π ω)                           ;; → view spec, node record, effects
-   ;; Recursively init the resulting view spec
-   ;; with the node record π now written back into memory
-   (init (extend-mem m_e p π) δ s t m_prime ω_prime)
-   -------- "InitCom"
-   (init m δ (C v)
-             p                            ;; tree node is the path p
-             (extend-mem m_prime p
-               (node-record-set-dec+child π Effect t))
-             (append-ω ω ω_prime))])
+(default-language React-tRace)
 
 
 ;; Substitution
@@ -250,8 +170,6 @@
    ,(cons (term (l_other v_other))
           (term (store-update ((l_rest v_rest) ...) l v)))]
   [(store-update () l v) ((l v))])
-
-
 
 
 ;; Queue operations
