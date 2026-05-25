@@ -28,7 +28,7 @@
      n
      x
      (e op e)
-     (array e ...)
+     (e ...)
      (print e)
      (if e e e)
      (begin e e)
@@ -56,6 +56,9 @@
      (s ...)
      (l p))
 
+  ;; Closures
+  (cl ::= ((λ (x) e) σ))
+
   ;; ViewSpec
   (s ::= k cl cs (s ...))
 
@@ -64,7 +67,7 @@
 
   (x C y ::= variable-not-otherwise-mentioned)
   (l ::= natural)
-  (n ::= number)
+  (n ::= integer)
   (p ::= natural)
 
   (π ::= (view cs (d ...) ρ q t))
@@ -116,7 +119,7 @@
   [ ;;"StepInit"
    (eval () () e Normal s () ω)        ;; [], [] ⊢ e ↓Normal s, [], ω
    (init () s t m ω_prime)            ;; [] ⊢ init(s) = ⟨t, m, ω'⟩
-   -----------------------------------
+   ----------------------------------- "StepInit"
    (step-init (e δ)
               (t m (append-ω ω ω_prime) δ Stable))])
 
@@ -124,7 +127,7 @@
 ;; The append -|-|- helper function
 (define-metafunction React-tRace
   append-ω : ω ω -> ω
-  [(append-ω · ω) ω]
+  [(append-ω () ω) ω]
   [(append-ω (ω_1 (fun x -> e)) ω_2)
    ((append-ω ω_1 ω_2) (fun x -> e))])
 
@@ -133,23 +136,23 @@
   #:mode (init I I I O O O)
   #:contract (init m δ s t m ω)
 
-  ;; ── InitConst ─────────────────────────────────────────────
-  ;; Constants pass through; no memory change, no effects
+  ;; InitConst 
+  ;; Constants pass through
   [-------- "InitConst"
-   (init m δ k k m ·)]
+   (init m δ k k m ())]
 
-  ;; ── InitClos ──────────────────────────────────────────────
+  ;; InitClos
   ;; Closures pass through the same way
   [-------- "InitClos"
-   (init m δ cl cl m ·)]
+   (init m δ cl cl m ())]
 
-  ;; ── InitArray ─────────────────────────────────────────────
+  ;; InitArray 
   ;; Init each element left-to-right, threading memory through.
-  ;; Base case: empty array
+  ;; Base Case: empty array
   [-------- "InitArray-Nil"
-   (init m δ (view ()) (view ()) m ·)]
+   (init m δ (view ()) (view ()) m ())]
 
-  ;; Inductive: init head, then tail with updated memory
+  ;; Inductive Step: init head, then tail with updated memory
   [(init m_0 δ s_1 t_1 m_1 ω_1)
    (init m_1 δ (view (s_rest ...)) (view (t_rest ...)) m_2 ω_2)
    -------- "InitArray-Cons"
@@ -158,7 +161,7 @@
                m_2
                (append-ω ω_1 ω_2))]
 
-  ;; ── InitCom ───────────────────────────────────────────────
+  ;; InitCom - NOT NEEDED?
   ;; Mount a component instance ⟨C, v⟩ into the tree.
   [(fresh-path m p)                        ;; m ⊢ p fresh
    (where (fun x -> e) (lookup-comp δ C)) ;; δ[C] = λx.e
@@ -171,7 +174,7 @@
    ;; Evaluate the component body in Init phase
    ;; with p allocated and π_init stored, env [x↦v]
    (eval (extend-mem m p π_init)
-         (extend-env · x v)
+         (extend-env () x v)
          e
          Init                             ;; Init phase marker
          p                                ;; current path
@@ -185,6 +188,19 @@
              (extend-mem m_prime p
                (node-record-set-dec+child π Effect t))
              (append-ω ω ω_prime))])
+
+(define-judgment-form React-tRace
+  #:mode (eval I I I I I O O O)
+  #:contract (eval Σ_1 σ e ϕ p v Σ_2 ω)
+
+  ;; AppFunc
+  ;; Apply the function evaluation
+  [(eval Σ σ e_1 ϕ p ((λ (x) e) σ_1) Σ_1 ω_1)
+   (eval Σ_1 σ e_2 ϕ p v_2 Σ_2 ω_2)
+   (eval Σ_2 ((x v_2) σ_1) e ϕ p v Σ_2 ω)
+   -------- "AppFunc"
+   (eval Σ σ (e_1 e2) ϕ p v Σ (append (append-ω ω_1 ω_2) ω))])
+
 
 
 ;; Substitution
