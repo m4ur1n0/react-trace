@@ -68,18 +68,19 @@
   (x C y ::= variable-not-otherwise-mentioned)
   (l ::= natural)
   (n ::= integer)
-  (p ::= natural)
+  (p ::= natural -)
 
   (π ::= (view cs (d ...) ρ q t))
   (d ::= Check Effect)
   (ρ ::= ((v q) ...))  
   (q ::= (cl ...))
   (Σ ::= m π)
-  (m ::= ((p π) ...))
+  (m ::= ((p π) ...) mt)
+  (t ::= k cl p (t ...))
 
   ;; Runtime configurations for the one-component model
 
-  (phase ::= Init Succ)
+  (ϕ ::= Init Succ Normal) ;; Change phase to phi, or ϕ, to better follow paper 
 
   ;; Store: maps Hook labels to their persistent values
   (σ ::= ((l v) ...))
@@ -109,19 +110,24 @@
   (event (click ι) (change ι v)) ; etc.
 
   ;; Top-level configuration after: ⟨t, m, ω, δ, status⟩
-  (config (CONFIG t m ω δ status)))
+  (config (CONFIG t m ω δ mode))
+
+  ;; Allow hook to take in either input, allowing initialization
+  (hook-input (e δ) (t m ω δ mode)))
 
 
 (define-judgment-form React-tRace
-  #:mode (step-init I O)
-  #:contract (step-init (e δ) (t m ω δ status))
+  #:mode (hook I O)
+  #:contract (hook hook-input (t m ω δ mode))
 
-  [ ;;"StepInit"
-   (eval () () e Normal s () ω)        ;; [], [] ⊢ e ↓Normal s, [], ω
-   (init () s t m ω_prime)            ;; [] ⊢ init(s) = ⟨t, m, ω'⟩
+  ;; "StepInit"
+  ;; Initialize the program
+  [
+   (eval () () e Normal - s () ω)     ;; [], [] ⊢ e ↓Normal - s, [], ω
+   (init mt () s t m ω_prime)            ;; [] ⊢ init(s) = ⟨t, m, ω'⟩
    ----------------------------------- "StepInit"
-   (step-init (e δ)
-              (t m (append-ω ω ω_prime) δ Stable))])
+   (hook (e δ)
+              (t m (append-ω ω ω_prime) δ rendered))])
 
 
 ;; The append -|-|- helper function
@@ -159,35 +165,7 @@
    (init m_0 δ (view (s_1 s_rest ...))
                (view (t_1 t_rest ...))
                m_2
-               (append-ω ω_1 ω_2))]
-
-  ;; InitCom - NOT NEEDED?
-  ;; Mount a component instance ⟨C, v⟩ into the tree.
-  [(fresh-path m p)                        ;; m ⊢ p fresh
-   (where (fun x -> e) (lookup-comp δ C)) ;; δ[C] = λx.e
-   ;; Build the initial node record π for this component
-   (where π_init (node-record (C v)       ;; spec: ⟨C, v⟩
-                               {}          ;; dec: {}
-                               ()          ;; sttst: []  (state list)
-                               ()          ;; effq: []   (effect queue)
-                               (view ()))) ;; child: ⟨⟩
-   ;; Evaluate the component body in Init phase
-   ;; with p allocated and π_init stored, env [x↦v]
-   (eval (extend-mem m p π_init)
-         (extend-env () x v)
-         e
-         Init                             ;; Init phase marker
-         p                                ;; current path
-         s π ω)                           ;; → view spec, node record, effects
-   ;; Recursively init the resulting view spec
-   ;; with the node record π now written back into memory
-   (init (extend-mem m_e p π) δ s t m_prime ω_prime)
-   -------- "InitCom"
-   (init m δ (C v)
-             p                            ;; tree node is the path p
-             (extend-mem m_prime p
-               (node-record-set-dec+child π Effect t))
-             (append-ω ω ω_prime))])
+               (append-ω ω_1 ω_2))])
 
 (define-judgment-form React-tRace
   #:mode (eval I I I I I O O O)
@@ -197,9 +175,34 @@
   ;; Apply the function evaluation
   [(eval Σ σ e_1 ϕ p ((λ (x) e) σ_1) Σ_1 ω_1)
    (eval Σ_1 σ e_2 ϕ p v_2 Σ_2 ω_2)
-   (eval Σ_2 ((x v_2) σ_1) e ϕ p v Σ_2 ω)
+   (eval Σ_2 ((x v_2) σ_1) e ϕ p v Σ_3 ω_3)
    -------- "AppFunc"
-   (eval Σ σ (e_1 e2) ϕ p v Σ (append (append-ω ω_1 ω_2) ω))])
+   (eval Σ σ (e_1 e_2) ϕ p v Σ_3 (append (append-ω ω_1 ω_2) ω_3))]
+
+  ;; AppCom
+  ;; Evaluate a Component
+  [(eval Σ σ e_1 ϕ p C Σ_1 ω_1)
+   (eval Σ_1 σ e_2 ϕ p v Σ_2 ω_2)
+   -------- "AppCom"
+   (eval Σ σ (e_1 e_2) ϕ p (C v) Σ_2 (append-ω ω_1 ω_2))]
+
+  ;; AppSetComp
+  [(eval π   σ e_1 ϕ p (setter l p) π_1 ω_1)
+   (eval π_1 σ e_2 ϕ p cl_upd       π_2 ω_2)
+   (side-condition (member (term ϕ) '(Init Succ)))
+   (where π_3 (view-add-check (view-enqueue π_2 l cl_upd))) ;;- TODO: will check the big bracket on the bottom... eventually
+   -------- "AppSetComp"
+   (eval π σ (app e_1 e_2) ϕ p
+         () π_3 (append-ω ω_1 ω_2))]
+
+  ;; AppSetNormal
+  [(eval m σ e_1 Normal - (l p) m_1 ω_1)
+   (eval m_1 σ e_2 Normal - cl m_2 ω_2)
+   (where π (m-lookup m_2 p))
+   (where m_2 (m-update m_2 p (view-add-check (view-enqueue π l cl)))) ;; - TODO: will check big bracket on bottom... eventually
+   -------- "AppSetNormal"
+   (eval m σ (app e_1 e_2) Normal -
+         () m_2 (append-ω ω_1 ω_2))])
 
 
 
@@ -250,7 +253,6 @@
 
 
 ;; Store operations
-
 (define-metafunction React-tRace
   store-lookup : σ l -> any
   [(store-lookup ((l v) (l_rest v_rest) ...) l) v]
@@ -372,8 +374,8 @@
    React-tRace
 
    ;; Ordinary reduction within render
-   [--> (render phase (in-hole E e) σ Q)
-        (render phase (in-hole E e_new) σ Q)
+   [--> (render ϕ (in-hole E e) σ Q)
+        (render ϕ (in-hole E e_new) σ Q)
         (where (e_new) ,(apply-reduction-relation ->base (term e)))
         "render-base"]
 
@@ -386,8 +388,8 @@
 
    ;; Setter application: queue the updater, return unit immediately.
    ;; The queued function will be applied during check, not now.
-   [--> (render phase (in-hole E ((setter l) v_updater)) σ Q)
-        (render phase (in-hole E unit) σ (queue-push Q l v_updater))
+   [--> (render ϕ (in-hole E ((setter l) v_updater)) σ Q)
+        (render ϕ (in-hole E unit) σ (queue-push Q l v_updater))
         "setter-queue"]
 
    ;; Init: e_init is now a value; store it and bind variables
@@ -409,7 +411,7 @@
         "state-succ"]
 
    ;; Render done
-   [--> (render phase v σ Q)
+   [--> (render ϕ v σ Q)
         (done v σ Q)
         "render-done"]
 
