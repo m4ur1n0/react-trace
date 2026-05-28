@@ -21,7 +21,7 @@
   (P ::= (program (D ...) e))
   (D ::= (component C (x) e))
 
-  ;; Expressions
+  ;; Expressions 
   (e ::=
      unit
      true false
@@ -98,6 +98,13 @@
 
   ;; Queue: maps Hook labels to lists of pending updater functions
   (Q ::= ((l (v ...)) ...))
+                 
+  (p ::= integer)
+                 
+  (π ::= (cs (d ...) ρ q t))
+                 
+                 
+  (m ::= ((p π) ...)
 
   (config ::=
           (render phase e σ Q)
@@ -170,6 +177,8 @@
    ,(cons (term (l_other v_other))
           (term (store-update ((l_rest v_rest) ...) l v)))]
   [(store-update () l v) ((l v))])
+
+
 
 
 ;; Queue operations

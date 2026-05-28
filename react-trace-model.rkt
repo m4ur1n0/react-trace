@@ -93,5 +93,13 @@ m                 --> tree memory, maps paths to views with m[p] = view at path 
 
 
 FOR NOW -- let's just implement the language and ignore hook semantics, just maintain hook syntax
+
+
+
+< 
+
+
 |#
+
+
 
