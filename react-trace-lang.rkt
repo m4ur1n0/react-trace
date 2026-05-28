@@ -93,7 +93,7 @@
           (check σ Q)
           (done v σ Q))
 
-  (mode::= rendered check loop)
+  (mode::= rendered ⟲ •) ;; "rendered" corresponds to neuron-looking thing
 
   ;; Effect queue: ordered list of effect thunks (closures)
   (ω () (ω (fun x -> e)))
@@ -113,7 +113,7 @@
   (config (CONFIG t m ω δ mode))
 
   ;; Allow hook to take in either input, allowing initialization
-  (hook-input (e δ) (t m ω δ mode)))
+  (hook-input ::= (e δ) (t m ω δ mode)))
 
 
 (define-judgment-form React-tRace
@@ -123,14 +123,30 @@
   ;; "StepInit"
   ;; Initialize the program
   [
-   (eval () () e Normal - s () ω)     ;; [], [] ⊢ e ↓Normal - s, [], ω
+   (eval () () e Normal - s () ω)     ;; [], [] ⊢ e ⇓ Normal - s, [], ω
    (init mt () s t m ω_prime)            ;; [] ⊢ init(s) = ⟨t, m, ω'⟩
    ----------------------------------- "StepInit"
    (hook (e δ)
-              (t m (append-ω ω ω_prime) δ rendered))])
+         (t m (append-ω ω ω_prime) δ rendered))]
+
+  ;; "StepCheck"
+  ;; Check any for any state update
+  [
+   (check m_1 δ t μ m_2 ω_2)
+   ----------------------------------- "StepCheck"
+   (hook (t m_1 ω_1 δ ⟲)
+         (t m_2 (append-ω ω_1 ω_2) δ μ))]
+
+  ;; "StepEvent"
+  ;; State update check based on input occuring
+  [ ;; TODO
+   ----------------------------------- "StepEvent"
+   (hook (t m_1 ω δ •)
+         (t m_2 (append-ω ω_1 ω_2) δ ⟲))]
+  )
 
 
-;; The append -|-|- helper function
+;; The append -|-|- helper function, extend output buffer
 (define-metafunction React-tRace
   append-ω : ω ω -> ω
   [(append-ω () ω) ω]
@@ -138,9 +154,15 @@
    ((append-ω ω_1 ω_2) (fun x -> e))])
 
 
+;;
+;; ------------------------------ INIT
+;;
+
 (define-judgment-form React-tRace
   #:mode (init I I I O O O)
   #:contract (init m δ s t m ω)
+  ;; init takes in a tree memory, a definition table, and a spec s
+  ;; and renders into a tree t, modifies memory, and prints buffer ω
 
   ;; InitConst 
   ;; Constants pass through
@@ -167,42 +189,95 @@
                m_2
                (append-ω ω_1 ω_2))])
 
+
+;;
+;; ------------------------------ EVAL
+;;
+
 (define-judgment-form React-tRace
   #:mode (eval I I I I I O O O)
   #:contract (eval Σ_1 σ e ϕ p v Σ_2 ω)
+  ;; eval takes in a context Σ, an environment σ, an expression e, a phase ϕ, a path p
+  ;; and returns a value v, a modified context Σ_2, and an output buffer ω
 
   ;; AppFunc
   ;; Apply the function evaluation
   [(eval Σ σ e_1 ϕ p ((λ (x) e) σ_1) Σ_1 ω_1)
    (eval Σ_1 σ e_2 ϕ p v_2 Σ_2 ω_2)
    (eval Σ_2 ((x v_2) σ_1) e ϕ p v Σ_3 ω_3)
-   -------- "AppFunc"
+   ---------------------------------------- "AppFunc"
    (eval Σ σ (e_1 e_2) ϕ p v Σ_3 (append (append-ω ω_1 ω_2) ω_3))]
 
   ;; AppCom
   ;; Evaluate a Component
   [(eval Σ σ e_1 ϕ p C Σ_1 ω_1)
    (eval Σ_1 σ e_2 ϕ p v Σ_2 ω_2)
-   -------- "AppCom"
+   ------------------------------ "AppCom"
    (eval Σ σ (e_1 e_2) ϕ p (C v) Σ_2 (append-ω ω_1 ω_2))]
 
   ;; AppSetComp
   [(eval π   σ e_1 ϕ p (setter l p) π_1 ω_1)
-   (eval π_1 σ e_2 ϕ p cl_upd       π_2 ω_2)
+   (eval π_1 σ e_2 ϕ p cl π_2 ω_2)
    (side-condition (member (term ϕ) '(Init Succ)))
-   (where π_3 (view-add-check (view-enqueue π_2 l cl_upd))) ;;- TODO: will check the big bracket on the bottom... eventually
-   -------- "AppSetComp"
+   ;;(where - TODO: will check the big bracket on the bottom... eventually
+   --------------------------------- "AppSetComp"
    (eval π σ (app e_1 e_2) ϕ p
          () π_3 (append-ω ω_1 ω_2))]
 
   ;; AppSetNormal
   [(eval m σ e_1 Normal - (l p) m_1 ω_1)
    (eval m_1 σ e_2 Normal - cl m_2 ω_2)
-   (where π (m-lookup m_2 p))
-   (where m_2 (m-update m_2 p (view-add-check (view-enqueue π l cl)))) ;; - TODO: will check big bracket on bottom... eventually
+   ;; (where - TODO: will check big bracket on bottom... eventually
    -------- "AppSetNormal"
    (eval m σ (app e_1 e_2) Normal -
-         () m_2 (append-ω ω_1 ω_2))])
+         () m_2 (append-ω ω_1 ω_2))]
+
+  ;; SttBind
+  #;[ ;; TODO
+   -------------- "SttBind"
+    ;; TODO
+   ]
+
+  ;; SttReBind
+  #;[ ;; TODO
+   -------------- "SttReBind"
+    ;; TODO
+   ]
+  )
+
+;;
+;; ------------------------------ CHECK
+;;
+
+(define-judgment-form React-tRace
+  #:mode (check I I I O O O)
+  #:contract (check m_1 δ t μ m_2 ω)
+  ;; check takes in tree memory m_1, a definition table δ, and a tree t,
+  ;; then outputs modified tree memory m_2, updates the mode to rendered or • (event loop), and prints ω
+  ;; re-renders only when mode is rendered. Otherwise just modifies tree memory when mode is •
+
+  ;; CheckConst
+  ;; Constants pass through
+  [
+   --------------------- "CheckConst"
+   (check m δ k • m ())]
+
+  ;; CheckClos
+  ;; Closures also pass through
+  [
+   ------------------ "CheckClos"
+   (check m δ cl • m ())]
+
+  ;; CheckArray
+  #;[ ;; TODO
+   -------- "CheckArray"
+   ;; TODO
+   ]
+
+  ;; CheckIdle
+  [ ;; TODO
+   -------- "CheckIdle"
+   (check m_1 δ p μ m_2 ω)])
 
 
 
