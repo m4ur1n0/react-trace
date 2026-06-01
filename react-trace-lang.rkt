@@ -56,6 +56,8 @@
      (s ...)
      (l p))
 
+  (k ::= n true false ())
+
   ;; Closures
   (cl ::= ((λ (x) e) σ))
 
@@ -88,7 +90,7 @@
   ;; Queue: maps Hook labels to lists of pending updater functions
   (Q ::= ((l (v ...)) ...))
 
-  (μ ::= rendered ⟲ •) ;; "rendered" corresponds to neuron-looking thing
+  (μ ::= rendered ⟲ • (μ ...)) ;; "rendered" corresponds to neuron-looking thing
 
   ;; Effect queue: ordered list of effect thunks (closures)
   (ω () (ω (fun x -> e)))
@@ -134,9 +136,11 @@
 
   ;; "StepEvent"
   ;; State update check based on input occuring
-  #;[ ;; TODO
+  [(where (_ ... cl_handler _ ...) (handlers m_1 t))
+   (where (λ x_arg e_body σ_cl) cl_handler)
+   (eval m_1 (store-update σ_cl x_arg ()) e_body Normal - v m_2 ω_2)
    ----------------------------------- "StepEvent"
-   (hook (t m_1 ω δ •)
+   (hook (t m_1 ω_1 δ •)
          (t m_2 (append-ω ω_1 ω_2) δ ⟲))]
   )
 
@@ -150,12 +154,31 @@
 
 
 ;;
+;; ------------------------------ HANDLERS
+;; 
+(define-metafunction React-tRace
+  handlers : m t -> (cl ...)
+  ;; if t = k (constant)
+  [(handlers m k)
+   ()]
+  ;; if t = cl (closure)
+  [(handlers m cl)
+   (cl)]
+  ;; if t = [t_i]^n (array)
+  [(handlers m (t_i ...))
+   ,(apply append (map (λ (t_i) (term (handlers m ,t_i))) (term (t_i ...))))]
+  ;; if t = p (path), look up view and recurse on child
+  [(handlers m p)
+   (handlers m (π-child (m-lookup m p)))])
+
+
+;;
 ;; ------------------------------ INIT
 ;;
 
 (define-judgment-form React-tRace
   #:mode (init I I I O O O)
-  #:contract (init m δ s t m ω)
+  #:contract (init m_1 δ s t m_2 ω)
   ;; init takes in a tree memory, a definition table, and a spec s
   ;; and renders into a tree t, modifies memory, and prints buffer ω
 
@@ -169,20 +192,18 @@
   [-------- "InitClos"
    (init m δ cl cl m ())]
 
-  ;; InitArray 
-  ;; Init each element left-to-right, threading memory through.
-  ;; Base Case: empty array
+  ;; InitArray-Nil
   [-------- "InitArray-Nil"
-   (init m δ (view ()) (view ()) m ())]
-
-  ;; Inductive Step: init head, then tail with updated memory
+   (init m δ () () m ())]
+  
+  ;; InitArray-Cons
   [(init m_0 δ s_1 t_1 m_1 ω_1)
-   (init m_1 δ (view (s_rest ...)) (view (t_rest ...)) m_2 ω_2)
+   (init m_1 δ (s_rest ...) (t_rest ...) m_2 ω_2)
    -------- "InitArray-Cons"
-   (init m_0 δ (view (s_1 s_rest ...))
-               (view (t_1 t_rest ...))
-               m_2
-               (append-ω ω_1 ω_2))])
+   (init m_0 δ (s_1 s_rest ...)
+         (t_1 t_rest ...)
+         m_2
+         (append-ω ω_1 ω_2))])
 
 
 ;;
@@ -274,7 +295,7 @@
 
   ;; CheckConst
   ;; Constants pass through
-  [
+  [ 
    --------------------- "CheckConst"
    (check m δ k • m ())]
 
@@ -288,34 +309,38 @@
   ;; Check each element left-to-right, threading memory through.
   ;; Base Case: empty array
   [-------- "CheckArray-Nil"
-   (check m δ μ (view ()) m ())]
+   (check m δ () () m ())]
 
   ;; Inductive Step: Check head, then tail with updated memory
-  [(check m_0 δ s_1 μ_1 m_1 ω_1)
-   (check m_1 δ (view (s_rest ...))
+  [(check m_0 δ t_1 μ_1 m_1 ω_1)
+   (check m_1 δ (t_rest ...)
           (μ_rest ...) m_2 ω_2)
    ------------------------------ "CheckArray-Cons"
-   (check m_0 δ (view (s_1 s_rest ...))
-          (view (μ_1 μ_rest ...))
-               m_2
-               (append-ω ω_1 ω_2))]
+   (check m_0 δ
+          (t_1 t_rest ...)
+          (μ_1 μ_rest ...)
+          m_2
+          (append-ω ω_1 ω_2))]
 
   ;; CheckIdle
   [(where π (m-lookup m_1 p))
+   (side-condition (not (eq? (term π) #f)))
+   (side-condition (not (member 'Check (term (π-dec π)))))
    (check m_1 δ (π-child π) μ m_2 ω)
-   (side-condition (not (member 'check (term (π-dec π)))))
    ------------------------------- "CheckIdle"
    (check m_1 δ p μ m_2 ω)])
 
 
 ;; Metafunction to find a view given a path
 (define-metafunction React-tRace
-  m-lookup : m p -> π
+  m-lookup : m p -> any
   [(m-lookup ((p_0 π_0) (p_rest π_rest) ...) p) π_0
    (side-condition (equal? (term p_0) (term p)))]
   [(m-lookup ((p_0 π_0) (p_rest π_rest) ...) p)
    (m-lookup ((p_rest π_rest) ...) p)
-   (side-condition (not (equal? (term p_0) (term p))))])
+   (side-condition (not (equal? (term p_0) (term p))))]
+  [(m-lookup mt p) #f]
+  [(m-lookup () p) #f])
 
 ;; Metafunction to get a view's child
 (define-metafunction React-tRace
@@ -344,3 +369,179 @@
    ,(cons (term (l_other v_other))
           (term (store-update ((l_rest v_rest) ...) l v)))]
   [(store-update () l v) ((l v))])
+
+
+
+
+
+;;
+;; ------------------------------ TESTS
+;;
+;; ---- InitConst ----
+#;(redex-match React-tRace δ (term ()))
+
+#;(redex-match React-tRace ω (term ()))
+
+#;(redex-match React-tRace s (term ((λ (x_1) x_1) ())))
+
+(test-equal
+  (judgment-holds (init mt () 42 t m_2 ω) (t m_2 ω))
+  '((42 mt ())))
+
+(test-equal
+  (judgment-holds (init mt () true t m_2 ω) (t m_2 ω))
+  '((true mt ())))
+
+(test-equal
+  (judgment-holds (init mt () () t m_2 ω) (t m_2 ω))
+  '((() mt ())))
+
+;; ---- InitClos ----
+(test-equal
+  (judgment-holds (init mt () ((λ (x_1) x_1) ()) t m_2 ω) (t m_2 ω))
+  '((((λ (x_1) x_1) ()) mt ())))
+
+(test-equal
+  (judgment-holds (init mt () ((λ (x_1) x_1) ((0 42))) t m_2 ω) (t m_2 ω))
+  '((((λ (x_1) x_1) ((0 42))) mt ())))
+
+(test-equal
+  (judgment-holds (init mt () ((λ (x_1) (x_1 x_1)) ()) t m_2 ω) (t m_2 ω))
+  '((((λ (x_1) (x_1 x_1)) ()) mt ())))
+
+(test-equal
+  (judgment-holds (init mt () ((λ (x_1) x_1) ((0 42) (1 true))) t m_2 ω) (t m_2 ω))
+  '((((λ (x_1) x_1) ((0 42) (1 true))) mt ())))
+
+(test-equal
+  (judgment-holds (init mt () ((λ (x_1) 42) ()) t m_2 ω) (t m_2 ω))
+  '((((λ (x_1) 42) ()) mt ())))
+
+;; Memory is non-empty but unchanged — closures don't modify memory
+(test-equal
+  (judgment-holds
+    (init ((0 (view (C 42) () () () 42))) ()
+          ((λ (x_1) x_1) ())
+          t m_2 ω)
+    (t m_2 ω))
+  '((((λ (x_1) x_1) ()) ((0 (view (C 42) () () () 42))) ())))
+
+
+;; ---- InitArray ----
+
+;; ---- InitArray-Nil ----
+(test-equal
+  (judgment-holds (init mt () () t m_2 ω) (t m_2 ω))
+  '((() mt ())))
+
+;; ---- InitArray-Cons ----
+(test-equal
+  (judgment-holds (init mt () (42) t m_2 ω) (t m_2 ω))
+  '(((42) mt ())))
+
+(test-equal
+  (judgment-holds (init mt () (1 2 3) t m_2 ω) (t m_2 ω))
+  '(((1 2 3) mt ())))
+
+(test-equal
+  (judgment-holds
+    (init mt ()
+          (42 ((λ (x_1) x_1) ()) true)
+          t m_2 ω)
+    (t m_2 ω))
+  '(((42 ((λ (x_1) x_1) ()) true) mt ())))
+
+(test-equal
+  (judgment-holds
+    (init mt ()
+          ((1 2) (3 4))
+          t m_2 ω)
+    (t m_2 ω))
+  '((((1 2) (3 4)) mt ())))
+
+;; ---- CheckConst ----
+;; Memory doesn't matter for constants, but provide non-empty m to be safe
+(test-equal
+  (judgment-holds
+    (check ((0 (view (C 42) () () () 42))) () 42 μ m_2 ω)
+    (μ m_2 ω))
+  '((• ((0 (view (C 42) () () () 42))) ())))
+
+(test-equal
+  (judgment-holds
+    (check ((0 (view (C 42) () () () 42))) () true μ m_2 ω)
+    (μ m_2 ω))
+  '((• ((0 (view (C 42) () () () 42))) ())))
+
+;; ---- CheckClos ----
+(test-equal
+  (judgment-holds
+    (check ((0 (view (C 42) () () () 42))) ()
+           ((λ (x_1) x_1) ())
+           μ m_2 ω)
+    (μ m_2 ω))
+  '((• ((0 (view (C 42) () () () 42))) ())))
+
+;; ---- CheckArray-Nil ----
+(test-equal
+  (judgment-holds
+    (check ((0 (view (C 42) () () () 42))) () (42) μ m_2 ω)
+    (μ m_2 ω))
+  '(((•) ((0 (view (C 42) () () () 42))) ())))
+
+;; ---- CheckArray-Cons ----
+(test-equal
+  (judgment-holds
+    (check ((0 (view (C 42) () () () 42))) () (42) μ m_2 ω)
+    (μ m_2 ω))
+  '(((•) ((0 (view (C 42) () () () 42))) ())))
+
+(test-equal
+  (judgment-holds
+    (check ((0 (view (C 42) () () () 42))) () (1 2 3) μ m_2 ω)
+    (μ m_2 ω))
+  '(((• • •) ((0 (view (C 42) () () () 42))) ())))
+
+(test-equal
+  (judgment-holds
+    (check ((0 (view (C 42) () () () 42))) ()
+           (42 ((λ (x_1) x_1) ()))
+           μ m_2 ω)
+    (μ m_2 ω))
+  '(((• •) ((0 (view (C 42) () () () 42))) ())))
+
+;; ---- CheckIdle ----
+(test-equal
+  (judgment-holds
+    (check ((0 (view (C 42) () () () 42))) ()
+           0 μ m_2 ω)
+    (μ m_2 ω))
+  '((• ((0 (view (C 42) () () () 42))) ())))
+
+(test-equal
+  (judgment-holds
+    (check ((0 (view (C 42) () () () ((λ (x_1) x_1) ())))) ()
+           0 μ m_2 ω)
+    (μ m_2 ω))
+  '((• ((0 (view (C 42) () () () ((λ (x_1) x_1) ())))) ())))
+
+(test-equal
+  (judgment-holds
+    (check ((0 (view (C 42) () () () 1))
+            (1 (view (C 43) () () () 42))) ()
+           0 μ m_2 ω)
+    (μ m_2 ω))
+  '((• ((0 (view (C 42) () () () 1))
+        (1 (view (C 43) () () () 42))) ())))
+
+;; ---- Handlers ----
+(test-equal (term (handlers ((0 (view (C 42) () () () 42))) 42)) '())
+
+(test-equal
+  (term (handlers ((0 (view (C 42) () () () 42))) ((λ (x_1) x_1) ())))
+  '(((λ (x_1) x_1) ())))
+
+(test-equal
+  (term (handlers ((0 (view (C 42) () () () 42)))
+                  (42 ((λ (x_1) x_1) ()))))
+  '(((λ (x_1) x_1) ())))
