@@ -72,13 +72,8 @@
 
   (π ::= (view cs (d ...) ρ q t))
   (d ::= Check Effect)
-
-  ;; state store, v = val , q = queue of updates as setter closures
-  (ρ ::= ((l v q) ...))
-  
+  (ρ ::= ((v q) ...))  
   (q ::= (cl ...))
-
-  
   (Σ ::= m π)
   (m ::= ((p π) ...) mt)
   (t ::= k cl p (t ...))
@@ -239,13 +234,8 @@
 
   ;; SttBind
     ;; EVALUATING A STATE BINDING DURING INITIAL RENDER
-    ;; π_1 will now have { π_1.sttst = [ l --> { val: v_1 , sttq : [] } }
-    ;; σ will now have [ x |-> v_1 , x_set |-> (l p) ]
-    ;; and e_2 will evaluae under this new context
-  [ (eval π σ e_1 Init p v_1 π_1 ω_1) 
-    (eval π_1 σ e_1 Init p v_2 π_2 ω_2)
+  [ (eval m )
    -------------- "SttBind"
-    (eval π σ (let (x 
     ;; TODO
    ]
 
@@ -354,14 +344,6 @@
    ,(cons (term (l_other v_other))
           (term (store-update ((l_rest v_rest) ...) l v)))]
   [(store-update () l v) ((l v))])
-
-(define-metafunction React-tRace
-  store-extend : ρ v -> ρ
-  [(store-update '()
-                 (list (1 v '())))]
-  [(store-update ((l_1 v_1 q_1) ...)
-                 (list (((+ 1 (length ρ)) v '()) ρ)))]
-   
 
 
 
