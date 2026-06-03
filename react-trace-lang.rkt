@@ -74,7 +74,7 @@
   (p ::= natural -)
 
   (π ::= (view cs (dec ...) ρ q t))
-  (dec ::= Check Effect (dec ...))
+  (dec ::= Check Effect) ;; removed (dec ...), decisions are not recursive lists of decisisions?
 
   ;; ρ = a store of state vars within a view
   (ρ ::= ((l v q) ...))  
@@ -98,7 +98,8 @@
   (μ ::= rendered ⟲ • (μ ...)) ;; "rendered" corresponds to neuron-looking thing
 
   ;; Effect queue: ordered list of effect thunks (closures)
-  (ω () (ω (fun x -> e)))
+      ;; WRONG; NOTE: this should be the print queue / output buffer
+  (ω ::= (v ...))
 
   ;; Render result outcome
   (outcome Normal Throw)
@@ -108,6 +109,8 @@
 
   ;; Top-level configuration before StepInit: ⟨e, δ⟩
   ;; δ is the external event queue (user events)
+      ;; note: in the paper i think this is actually the componenet definition table, and neither are things we currently use...
+      ;; since wee dont use it anywhere i shall leave for ben.
   (δ () (δ event))
   (event (click ι) (change ι v)) ; etc.
 
@@ -142,7 +145,7 @@
   ;; "StepEvent"
   ;; State update check based on input occuring
   [(where (_ ... cl_handler _ ...) (handlers m_1 t))
-   (where (λ x_arg e_body σ_cl) cl_handler)
+   (where ((λ (x_arg) e_body) σ_cl) cl_handler)
    (eval m_1 (env-extend σ_cl x_arg ()) e_body Normal - v m_2 ω_2)
    ----------------------------------- "StepEvent"
    (hook (t m_1 ω_1 δ •)
@@ -252,7 +255,7 @@
   ;; Apply the function evaluation
   [(eval Σ σ e_1 ϕ p ((λ (x) e) σ_1) Σ_1 ω_1)
    (eval Σ_1 σ e_2 ϕ p v_2 Σ_2 ω_2)
-   (eval Σ_2 ((x v_2) σ_1) e ϕ p v Σ_3 ω_3)
+   (eval Σ_2 (env-extend σ_1 x v_2) e ϕ p v Σ_3 ω_3) ;; changed to use env-extend and be a flat list of env
    ---------------------------------------- "AppFunc"
    (eval Σ σ (e_1 e_2) ϕ p v Σ_3 (append-ω (append-ω ω_1 ω_2) ω_3))]
 
@@ -273,18 +276,40 @@
    (where ρ_2 (π-ρ π_2))
    (where ρ_3 (ρ-enqueue ρ_2 l cl))
    (where π_2+ (π-set-ρ π_2 ρ_3))
-   (where π_3 (update-dec π_2 Check))
+   (where π_3 (update-dec π_2+ Check))
    --------------------------------- "AppSetComp"
    (eval π σ (e_1 e_2) ϕ p ;; removed (app ...), our language says application is (e e) not (app e e)?
          () π_3 (append-ω ω_1 ω_2))]
 
   ;; AppSetNormal
-  [(eval m σ e_1 Normal - (l p) m_1 ω_1)
+      ;; TO-DO: enqueue the update (i made a metafunction) and add Chcek
+  [(eval m σ e_1 Normal - (setter l p_target) m_1 ω_1)
    (eval m_1 σ e_2 Normal - cl m_2 ω_2)
    ;; (where - TODO: will check big bracket on bottom... eventually
    -------- "AppSetNormal"
    (eval m σ (e_1 e_2) Normal - ;; removed (app ...), our language says application is (e e) not (app e e)?
          () m_2 (append-ω ω_1 ω_2))]
+
+  ;; APPSETNORMAL ALTERNATIVE (as far as i can tell only an effect sets app to normal, so we never will)
+  ;; AppSetNormal is intentionally not implemented yet.
+  ;; In the paper, this is the Normal-phase setter rule used by effects/events.
+  ;; A setter value `(setter l p_target)` should use `p_target` to find the
+  ;; owning view in tree memory, enqueue the updater into that view's ρ[l],
+  ;; mark that view with Check, and return unit.
+  ;;
+  ;; This model currently focuses on component-local Init/Succ useState behavior,
+  ;; so leaving this rule inactive is more accurate than pretending Normal-phase
+  ;; setters work.
+  #;[(eval m σ e_1 Normal - (setter l p_target) m_1 ω_1)
+     (eval m_1 σ e_2 Normal - cl m_2 ω_2)
+     ;; TODO:
+     ;; 1. look up π_target = m[p_target]
+     ;; 2. enqueue cl into π_target.ρ[l]
+     ;; 3. mark π_target with Check
+     ;; 4. write π_target back into m
+     -------- "AppSetNormal"
+     (eval m σ (e_1 e_2) Normal -
+           () m_2 (append-ω ω_1 ω_2))]
 
   ;; SttBind
     ;; EVALUATING A STATE BINDING DURING INITIAL RENDER
@@ -496,7 +521,7 @@
 
 ; lookup val from hook l (not calling it lookup because that might make more sense for something that also return sthe setter
 (define-metafunction React-tRace
-  ρ-val : ρ l -> v ;;any?
+  ρ-val : ρ l -> any ;; v?
   [(ρ-val ((l v q) (l_rest v_rest q_rest) ...) l) ;; recursively search, so l if we find it will be first
    v]
 
@@ -512,7 +537,7 @@
 
 ;; Get queueued updatedr closures stored @ l
 (define-metafunction React-tRace
-  ρ-queue : ρ l -> q ;; any?
+  ρ-queue : ρ l -> any ;; q?
 
   [(ρ-queue ((l v q) (l_rest v_rest q_rest) ...) l) ;;recursive like lookup v
    q]
