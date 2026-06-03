@@ -143,7 +143,7 @@
   ;; State update check based on input occuring
   [(where (_ ... cl_handler _ ...) (handlers m_1 t))
    (where (λ x_arg e_body σ_cl) cl_handler)
-   (eval m_1 (store-update σ_cl x_arg ()) e_body Normal - v m_2 ω_2)
+   (eval m_1 (env-extend σ_cl x_arg ()) e_body Normal - v m_2 ω_2)
    ----------------------------------- "StepEvent"
    (hook (t m_1 ω_1 δ •)
          (t m_2 (append-ω ω_1 ω_2) δ ⟲))]
@@ -560,26 +560,6 @@
     (l v_old (cl_old ... cl_new))
     (l_after v_after q_after) ...)])
 
-
-
-
-  
-
-(define-metafunction React-tRace ;; should be like env-lookup or something? either way this symbol is wrong
-  store-lookup : σ l -> any
-  [(store-lookup ((l v) (l_rest v_rest) ...) l) v]
-  [(store-lookup ((l_other v_other) (l_rest v_rest) ...) l)
-   (store-lookup ((l_rest v_rest) ...) l)]
-  [(store-lookup () l) #f])
-
-(define-metafunction React-tRace
-  store-update : σ l v -> σ
-  [(store-update ((l v_old) (l_rest v_rest) ...) l v)
-   ((l v) (l_rest v_rest) ...)]
-  [(store-update ((l_other v_other) (l_rest v_rest) ...) l v)
-   ,(cons (term (l_other v_other))
-          (term (store-update ((l_rest v_rest) ...) l v)))]
-  [(store-update () l v) ((l v))])
 
 
    
