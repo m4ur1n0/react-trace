@@ -90,7 +90,7 @@
   ;; Queue: maps Hook labels to lists of pending updater functions
   (Q ::= ((l (v ...)) ...))
 
-  (μ ::= rendered ⟲ • (μ ...)) ;; "rendered" corresponds to neuron-looking thing
+  (μ ::= rendered ↺ • (μ ...)) ;; "rendered" corresponds to neuron-looking thing
 
   ;; Effect queue: ordered list of effect thunks (closures)
   (ω () (ω (fun x -> e)))
@@ -105,9 +105,6 @@
   ;; δ is the external event queue (user events)
   (δ () (δ event))
   (event (click ι) (change ι v)) ; etc.
-
-  ;; Top-level configuration after: ⟨t, m, ω, δ, status⟩
-  (config (CONFIG t m ω δ μ))
 
   ;; Allow hook to take in either input, allowing initialization
   (hook-input ::= (e δ) (t m ω δ μ)))
@@ -131,7 +128,7 @@
   [
    (check m_1 δ t μ m_2 ω_2)
    ----------------------------------- "StepCheck"
-   (hook (t m_1 ω_1 δ ⟲)
+   (hook (t m_1 ω_1 δ ↺)
          (t m_2 (append-ω ω_1 ω_2) δ μ))]
 
   ;; "StepEvent"
@@ -141,7 +138,7 @@
    (eval m_1 (store-update σ_cl x_arg ()) e_body Normal - v m_2 ω_2)
    ----------------------------------- "StepEvent"
    (hook (t m_1 ω_1 δ •)
-         (t m_2 (append-ω ω_1 ω_2) δ ⟲))]
+         (t m_2 (append-ω ω_1 ω_2) δ ↺))]
   )
 
 
@@ -259,6 +256,15 @@
    -------------- "SttReBind"
     ;; TODO
    ]
+
+  ;; Const
+  [----------------------------- "Const"
+   (eval Σ σ k ϕ p k Σ ())]
+
+  ;; Var
+  [(where v (store-lookup σ x))
+   ----------------------------- "Var"
+   (eval Σ σ x ϕ p v Σ ())]
   )
 
 
@@ -370,9 +376,36 @@
           (term (store-update ((l_rest v_rest) ...) l v)))]
   [(store-update () l v) ((l v))])
 
+(define react-step
+  (reduction-relation React-tRace
+   #:domain hook-input
+   ;; StepInit: (e, δ) -> (t, m, ω⊕ω', δ, rendered)
+   (--> (e δ)
+        (t m_2 (append-ω ω ω_2) δ ↺)
+        (judgment-holds (eval mt () e Normal - s () ω))
+        (judgment-holds (init () δ s t m_2 ω_2))
+        "StepInit")
+   ;; StepCheck: (t, m, ω, δ, ∪) -> (t, m', ω⊕ω', δ, μ)
+   (--> (t m ω δ ↺)
+        (t m_2 (append-ω ω ω_2) δ μ)
+        (judgment-holds (check m δ t μ m_2 ω_2))
+        "StepCheck")
+   ;; StepEvent: (t, m, ω, δ, •) -> (t, m', ω⊕ω', δ, ∪)
+   (--> (t m ω δ •)
+        (t m_2 (append-ω ω ω_2) δ ↺)
+        (where (_ ... ((λ (x_arg) e_body) σ_cl) _ ...) (handlers m t))
+        (judgment-holds (eval m (store-update σ_cl x_arg ()) e_body Normal - v m_2 ω_2))
+        "StepEvent")))
 
+(define (run-react e δ)
+  (let ([results (apply-reduction-relation* react-step (term (,e ,δ)))])
+    (cond
+      [(empty? results) 'diverges]
+      [(= (length results) 1) (first results)]
+      [else (raise "BUG: non-deterministic!")])))
 
-
+(traces react-step
+  (term ((((λ (x_1) x_1) ()) 42) ())))
 
 ;;
 ;; ------------------------------ TESTS
