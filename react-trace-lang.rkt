@@ -34,16 +34,17 @@
      (begin e e)
      (λ (x) e)
      (e e)
-     (let (x e) e)
+     (let (x e) e) ;; probably not necessary
 
      ;; useState: (state l (x_state x_set) e_init e_body)
      ;; In Init phase, e_init is evaluated and stored at label l.
      ;; In Succ phase, e_init is ignored; we read from the store.
      ;; x_state and x_set are bound in e_body only.
+         ;; paper equivalent: < let (x, xset) = useState^l e_1 in e_2 >
      (state l (x_state x_set) e_init e_body)
 
      ;; Setter value (appears at runtime after state is processed)
-     (setter l))
+     (setter l p))
 
   (op + - * / < <= = > >= !=)
 
@@ -54,7 +55,7 @@
      C
      cs
      (s ...)
-     (l p))
+     (setter l p)) ;;need to be using a particular setter
 
   (k ::= n true false ())
 
@@ -74,8 +75,10 @@
 
   (π ::= (view cs (dec ...) ρ q t))
   (dec ::= Check Effect (dec ...))
-  (ρ ::= ((v q) ...))  
-  (q ::= (cl ...))
+
+  ;; ρ = a store of state vars within a view
+  (ρ ::= ((l v q) ...))  
+  (q ::= (cl ...)) ;; the setter also stored
 
   
   (Σ ::= m π)
@@ -87,7 +90,7 @@
   (ϕ ::= Init Succ Normal) ;; Change phase to phi, or ϕ, to better follow paper 
 
   ;; Store: maps Hook labels to their persistent values
-  (σ ::= ((l v) ...))
+  (σ ::= ((x v) ...)) ;; ordinary var environment, not hook store
 
   ;; Queue: maps Hook labels to lists of pending updater functions
   (Q ::= ((l (v ...)) ...))
@@ -209,6 +212,33 @@
 
 
 ;;
+;; ------------------------------ APPLY UPDATES
+;;
+
+
+(define-judgment-form React-tRace
+  #:mode (apply-updaters I I I I I O O O)
+  #:contract (apply-updaters π q ϕ p v v π ω)
+
+  ;; no queued updates = final val is starting val
+  [--------------------------------------"ApplyUpdatersDone"
+   (apply-updaters π () ϕ p v v π ())]
+
+  ;; apply first updater closure, hten keep going
+  [(eval π
+         (env-extend σ_cl x_arg v_in)
+         e_updater
+         ϕ p v_next π_1 ω_1)
+
+   (apply-updaters π_1 (cl_rest ...) ϕ p v_next v_out π_2 ω_2)
+   ----------------------------------------------------------"ApplyUpdatersStep"
+   (apply-updaters π
+                   (((λ (x_arg) e_updater) σ_cl) cl_rest ...)
+                   ϕ p v_in v_out π_2 (append-ω ω_1 ω_2))])
+  
+
+
+;;
 ;; ------------------------------ EVAL
 ;;
 
@@ -224,7 +254,7 @@
    (eval Σ_1 σ e_2 ϕ p v_2 Σ_2 ω_2)
    (eval Σ_2 ((x v_2) σ_1) e ϕ p v Σ_3 ω_3)
    ---------------------------------------- "AppFunc"
-   (eval Σ σ (e_1 e_2) ϕ p v Σ_3 (append (append-ω ω_1 ω_2) ω_3))]
+   (eval Σ σ (e_1 e_2) ϕ p v Σ_3 (append-ω (append-ω ω_1 ω_2) ω_3))]
 
   ;; AppCom
   ;; Evaluate a Component
@@ -236,10 +266,16 @@
   ;; AppSetComp
   [(eval π   σ e_1 ϕ p (setter l p) π_1 ω_1)
    (eval π_1 σ e_2 ϕ p cl π_2 ω_2)
+   
    (side-condition (member (term ϕ) '(Init Succ)))
-   (where π_3 (update-dec π_2 check))
+
+   ;; get the hook store proper actually
+   (where ρ_2 (π-ρ π_2))
+   (where ρ_3 (ρ-enqueue ρ_2 l cl))
+   (where π_2+ (π-set-ρ π_2 ρ_3))
+   (where π_3 (update-dec π_2 Check))
    --------------------------------- "AppSetComp"
-   (eval π σ (app e_1 e_2) ϕ p
+   (eval π σ (e_1 e_2) ϕ p ;; removed (app ...), our language says application is (e e) not (app e e)?
          () π_3 (append-ω ω_1 ω_2))]
 
   ;; AppSetNormal
@@ -247,7 +283,7 @@
    (eval m_1 σ e_2 Normal - cl m_2 ω_2)
    ;; (where - TODO: will check big bracket on bottom... eventually
    -------- "AppSetNormal"
-   (eval m σ (app e_1 e_2) Normal -
+   (eval m σ (e_1 e_2) Normal - ;; removed (app ...), our language says application is (e e) not (app e e)?
          () m_2 (append-ω ω_1 ω_2))]
 
   ;; SttBind
@@ -255,17 +291,73 @@
     ;; π_1 will now have { π_1.sttst = [ l --> { val: v_1 , sttq : [] } }
     ;; σ will now have [ x |-> v_1 , x_set |-> (l p) ]
     ;; and e_2 will evaluae under this new context
-  [ (eval π σ e_1 Init p v_1 π_1 ω_1) 
-    (eval π_1 σ e_1 Init p v_2 π_2 ω_2)
+
+  ;; first eval the initializer,
+  ;; then store that val in teh view's hook store,
+  ;; then bind state var and setter var,
+  ;; then eval body
+  
+  [(eval π σ e_init Init p v_init π_1 ω_1)
+
+   ;; big bracket section for sttbind in fig 5
+   (where ρ_1 (π-ρ π_1))
+   (where ρ_2 (ρ-init ρ_1 l v_init))
+   (where π_1+ (π-set-ρ π_1 ρ_2))
+
+   (where σ+ (env-extend
+              (env-extend σ x_state v_init)
+              x_set
+              (setter l p)))
+
+   ;; then we can evaluate e_2 under these conditions
+   (eval π_1+ σ+ e_body Init p v_body π_2 ω_2)
    -------------- "SttBind"
-    (eval π σ (let (x 
-    ;; TODO
+
+   (eval π σ
+         (state l (x_state x_set) e_init e_body)
+         Init p
+         v_body
+         π_2
+         (append-ω ω_1 ω_2))
    ]
 
+
   ;; SttReBind
-  #;[ ;; TODO
+  ;; if we use a useState binding after initial render (pretty much the whole ballgame)
+  ;; read the old hook state from rho, apply the updaters, clear the q, bind state var and setter then exec body
+
+  ;;start by getting the pieces we need
+  
+  [ (where ρ_0 (π-ρ π_0))
+    (where v_old (ρ-val ρ_0 l))
+    (where q_old (ρ-queue ρ_0 l))
+
+    ;; if the label is missing then dis-apply this rule
+    (side-condition (not (equal? (term v_old) #f)))
+    (side-condition (not (equal? (term q_old) #f)))
+
+    ;; apply the queued updaters with the helper i jus wrote
+    (apply-updaters π_0 q_old Succ p v_old v_new π_n ω_updates)
+
+    ;; store the real final state val, then clear the q cause we applied everything
+    (where ρ_n (π-ρ π_n))
+    (where ρ_done (ρ-set-clear ρ_n l v_new))
+    (where π_n+ (π-set-ρ π_n ρ_done))
+
+    ;; bind x_state and x_set proper
+    (where σ+ (env-extend
+               (env-extend σ x_state v_new)
+               x_set
+               (setter l p)))
+
+    ;; finally eval
+    (eval π_n+ σ+ e_body Succ p v_body π_final ω_body)
+    
    -------------- "SttReBind"
-    ;; TODO
+   (eval π_0 σ
+         (state l (x_state x_set) e_init e_body)
+         Succ p v_body π_final
+         (append-ω ω_updates ω_body))
    ]
   )
 
@@ -362,7 +454,118 @@
 
   
 ;; Store operations
+
+;; pull the hook state store out of a view
 (define-metafunction React-tRace
+  π-ρ : π -> ρ
+  [(π-ρ (view cs (dec ...) ρ q t))
+   ρ])
+
+
+;; replace the whole hook state store of a view
+(define-metafunction React-tRace
+  π-set-ρ : π ρ -> π
+  [(π-set-ρ (view cs (dec ...) ρ_old q t) ρ_new)
+   (view cs (dec ...) ρ_new q t)])
+
+;; initialize or replace the state entry for hook label l
+;; in the pdf this is the part of the reduction relation that is like ρ[l |-> { val : v, sttq : [] }]
+(define-metafunction React-tRace
+  ρ-init : ρ l v -> ρ
+
+  ;; if l is already there, replace the val with v then clear queue
+  [(ρ-init ((l_before v_before q_before) ... (l v_old q_old) (l_after v_after q_after) ...) ;; maybe delete the l_after requirement? we want it to work if it's the last entry?
+           l
+           v_new)
+   ((l_before v_before q_before) ... (l v_new ()) (l_after v_after q_after) ...)]
+
+
+  ;; if l isn't in the store yet
+  [(ρ-init ((l_old v_old q_old) ...) l_new v_new)
+   ((l_old v_old q_old) ... (l_new v_new ()))
+   (side-condition
+    (not (member (term l_new) (term (l_old ...)))))])
+
+
+;; extend the actual environment and allow shadowing
+(define-metafunction React-tRace
+  env-extend : σ x v -> σ
+  [(env-extend ((x_old v_old) ...) x v)
+   ((x v) (x_old v_old) ...)])
+
+
+; lookup val from hook l (not calling it lookup because that might make more sense for something that also return sthe setter
+(define-metafunction React-tRace
+  ρ-val : ρ l -> v ;;any?
+  [(ρ-val ((l v q) (l_rest v_rest q_rest) ...) l) ;; recursively search, so l if we find it will be first
+   v]
+
+  [(ρ-val ((l_other v_other q_other) (l_rest v_rest q_rest) ...) l) ;; if we don't see it yet, keep checking
+   (ρ-val ((l_rest v_rest q_rest) ...) l)
+   (side-condition (not (equal? (term l_other) (term l))))] ;; make sure l really doesn't match
+
+  [(ρ-val () l) ;; base case, fail
+   #f] ;; should we error? should we trust caller to error?
+  )
+
+
+
+;; Get queueued updatedr closures stored @ l
+(define-metafunction React-tRace
+  ρ-queue : ρ l -> q ;; any?
+
+  [(ρ-queue ((l v q) (l_rest v_rest q_rest) ...) l) ;;recursive like lookup v
+   q]
+
+  [(ρ-queue ((l_other v_other q_other) (l_rest v_rest q_rest) ...) l) ;; if we don't see it yet, keep checking
+   (ρ-queue ((l_rest v_rest q_rest) ...) l)
+   (side-condition (not (equal? (term l_other) (term l))))]
+
+  [(ρ-queue () l) ;; base
+   #f])
+
+
+;; replace a hook @ label l with a new val and q
+(define-metafunction React-tRace
+  ρ-set : ρ l v q -> ρ
+
+  [(ρ-set ((l_before v_before q_before) ... (l v_old q_old) (l_after v_after q_after) ...)
+          l
+          v_new
+          q_new)
+   ((l_before v_before q_before) ... (l v_new q_new) (l_after v_after q_after) ...)]
+
+  [(ρ-set ((l_old v_old q_old) ...) l_new v_new q_new)
+   ((l_old v_old q_old) ... (l_new v_new q_new))
+   (side-condition
+    (not (member (term l_new) (term (l_old ...)))))])
+
+
+(define-metafunction React-tRace ;; helper to write new value and empty queue
+  ρ-set-clear : ρ l v -> ρ
+  [(ρ-set-clear ρ l v)
+   (ρ-set ρ l v ())])
+
+  
+;; put updates in state queue
+(define-metafunction React-tRace
+  ρ-enqueue : ρ l cl -> ρ
+
+  [(ρ-enqueue ((l_before v_before q_before) ...
+               (l v_old (cl_old ...))
+               (l_after v_after q_after) ...)
+              l
+              cl_new)
+   ((l_before v_before q_before) ...
+    (l v_old (cl_old ... cl_new))
+    (l_after v_after q_after) ...)])
+
+
+
+
+  
+
+(define-metafunction React-tRace ;; should be like env-lookup or something? either way this symbol is wrong
   store-lookup : σ l -> any
   [(store-lookup ((l v) (l_rest v_rest) ...) l) v]
   [(store-lookup ((l_other v_other) (l_rest v_rest) ...) l)
@@ -378,12 +581,7 @@
           (term (store-update ((l_rest v_rest) ...) l v)))]
   [(store-update () l v) ((l v))])
 
-(define-metafunction React-tRace
-  store-extend : ρ v -> ρ
-  [(store-update '()
-                 (list (1 v '())))]
-  [(store-update ((l_1 v_1 q_1) ...)
-                 (list (((+ 1 (length ρ)) v '()) ρ)))]
+
    
 
 
