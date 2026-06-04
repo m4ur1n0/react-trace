@@ -686,7 +686,6 @@
   )
 
 
-
 ;;
 ;; ------------------------------ CHECK
 ;;
@@ -1213,6 +1212,19 @@
                 (s1 + s2)))
            ())))
 
+
+#;(define d
+  (build-derivations
+   (eval-view
+    (view (Root ()) () (store) () ())
+    ()
+    10
+    Init
+    0
+    10
+    (view (Root ()) () (store) () ())
+    ())))
+
 ;; Ex7: counter — tree is [s, click-handler]
 (show "Ex7: Counter [s, click-handler]"
   (apply-reduction-relation react-step
@@ -1220,7 +1232,7 @@
               (sv (λ (dummy) (app ss (λ (old) (old + 1))))))
            ()))))
 
-(traces react-step (term ((state 0 (sv ss) 0
+#;(traces react-step (term ((state 0 (sv ss) 0
               (sv (λ (dummy) (app ss (λ (old) (old + 1))))))
            ())))
 
@@ -1229,6 +1241,39 @@
 (display (run-react (term (state 0 (sv ss) 42 sv)) (term ())))
 (newline)(newline)
 
-(test-results)
+#;(test-results)
 
-;; Quick debug of remaining failures
+
+
+;; EXAMPLE 2
+#;(traces react-step
+  (term
+   ((state 0 (s1 set1) 10
+      ((λ (x) x) 10))
+    ())))
+
+#;(define d
+  (build-derivations
+   (eval-view
+    (view (Root ()) () (store) () ())
+    ((x 10))                 
+    (app (λ (x) x) 10)
+    Init
+    0
+    10
+    (view (Root ()) () (store) () ())
+    ())))
+
+
+(define d
+  (build-derivations
+   (init
+    ()
+    ()
+    (1 2)
+    (1 2)
+    ()
+    ())))
+
+(show-derivations d)
+
