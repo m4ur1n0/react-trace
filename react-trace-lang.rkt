@@ -279,6 +279,13 @@
   [(mu-join _ ↺)         rendered]
   [(mu-join • •)         •])
 
+;; dec-has-check?: returns #t if Check appears in the dec list, #f otherwise.
+;; Used to guard CheckIdle so it only fires when no Check is present.
+(define-metafunction React-tRace
+  dec-has-check? : (dec ...) -> any
+  [(dec-has-check? (_ ... Check _ ...)) #t]
+  [(dec-has-check? (dec ...))           #f])
+
 ;;
 ;; ------------------------------ δ-LOOKUP (component definition table)
 ;;
@@ -527,10 +534,12 @@
   ;; SttBind: first render — evaluate initializer, store in Smap, bind vars, eval body
   ;; Uses helper judgments to avoid Redex mode-checker issues with View chains.
   [(eval-view View σ e_init Init p_cur v_init View_a Outbuf_a)
+                       
    (init-hook View_a l v_init View_b)
    (bind-state σ x_state x_set l p_cur v_init σ_ext)
+   
    (eval-view View_b σ_ext e_body Init p_cur v_body View_c Outbuf_b)
-   -------------- "SttBind"
+   --------------------------------------------------------------------------- "SttBind"
    (eval-view View σ (state l (x_state x_set) e_init e_body) Init p_cur
               v_body View_c (append-Outbuf Outbuf_a Outbuf_b))]
 
@@ -538,11 +547,15 @@
   [(where Smap_0 (View-Smap View_0))
    (where v_old  (Smap-val Smap_0 l))
    (where q_old  (Smap-queue Smap_0 l))
+   
    (side-condition (not (equal? (term v_old) #f)))
    (side-condition (not (equal? (term q_old) #f)))
+
    (apply-updaters View_0 q_old Succ p_cur v_old v_new View_n Outbuf_upd)
+                       
    (clear-hook View_n l v_new View_nb)
    (bind-state σ x_state x_set l p_cur v_new σ_ext)
+
    (eval-view View_nb σ_ext e_body Succ p_cur v_body View_final Outbuf_body)
    -------------- "SttReBind"
    (eval-view View_0 σ (state l (x_state x_set) e_init e_body) Succ p_cur
@@ -761,7 +774,7 @@
   ;; CheckIdle: view has no Check decision — recurse on child
   [(where View (m-lookup m_1 p))
    (side-condition (not (eq? (term View) #f)))
-   (side-condition (not (member (term Check) (term (View-dec View)))))
+   (where #f (dec-has-check? (View-dec View)))
    (check m_1 δ (View-child View) μ m_2 Outbuf)
    ------------------------------- "CheckIdle"
    (check m_1 δ p μ m_2 Outbuf)]
@@ -1444,5 +1457,375 @@
     (μ m_2 Outbuf))
   '((• (((path 0) (view (C 42) () (store) () 42))) ())))
 
+;;
+;; ============================================================
+;; FINAL PRESENTATION DEMOS
+;; ============================================================
+
+;; ── Demo 1: Set-then-read ────────────────────────────────────────────────────
+;; Expression: (state 0 (s setS) 0 (begin (app setS (λ (old) (old + 1))) s))
+;; Phase: Init from empty view.
+;; SttBind stores 0; AppSet-view enqueues the updater and marks dec=(Check);
+;; body evaluates s=0 and returns it.  No output printed.
+(test-equal
+  (judgment-holds
+    (eval-view (view (Root ()) () (store) () ()) ()
+               (state 0 (s setS) 0
+                 (begin (app setS (λ (old) (old + 1))) s))
+               Init (path 0) v_1 View_1 Outbuf_1)
+    (v_1
+     (Smap-val   (View-Smap View_1) 0)
+     (Smap-queue (View-Smap View_1) 0)
+     (View-dec   View_1)
+     Outbuf_1))
+  '((0
+     0
+     (((λ (old) (old + 1)) ((setS (setter 0 (path 0))) (s 0))))
+     (Check)
+     ())))
+
+;; ── Demo 2A: Counter — initial render (SttBind) ──────────────────────────────
+;; Counter body evaluated with props=0, Init phase, empty Smap.
+;; SttBind: count stored as 0, queue empty.
+;; Body (count handler) returns array spec: current count + click-handler closure.
+(test-equal
+  
+  (judgment-holds
+    (eval-view (view (Counter 0) () (store) () ()) ((props 0))
+               (state 0 (count setCount) 0
+                 (count (λ (dummy) (app setCount (λ (old) (old + 1))))))
+               Init (path 0) v_1 View_1 Outbuf_1)
+    (v_1
+     (Smap-val   (View-Smap View_1) 0)
+     (Smap-queue (View-Smap View_1) 0)
+     Outbuf_1))
+
+  
+  '(((0 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+         ((setCount (setter 0 (path 0))) (count 0) (props 0))))
+     0 () ())))
+
+;; ── Demo 2B: Counter — event handler enqueues updater (AppSet-mem) ───────────
+;; m has Counter at (path 0) with count=0, empty queue.
+;; Handler closure is called with dummy=(); body: (app setCount (λ old. old+1)).
+;; AppSet-mem enqueues the updater, marks Check on the view; count value unchanged.
+(test-equal
+
+
+  (judgment-holds
+    (eval-mem
+      (((path 0) (view (Counter 0) () (store (0 0 ())) () 0)))
+      ((dummy ()) (setCount (setter 0 (path 0))) (count 0) (props 0))
+      (app setCount (λ (old) (old + 1)))
+      v_1 m_1 Outbuf_1)
+    (v_1
+     (Smap-val   (View-Smap (m-lookup m_1 (path 0))) 0)
+     (Smap-queue (View-Smap (m-lookup m_1 (path 0))) 0)
+     (View-dec   (m-lookup m_1 (path 0)))
+     Outbuf_1))
+     
+     
+  '((() ; event itself returns void
+     0 ; hook 0 val is STILL 0.
+     (((λ (old) (old + 1)) 
+       ((dummy ()) 
+        (setCount (setter 0 (path 0))) 
+        (count 0) 
+        (props 0)))) ;; queue: updater enqueued
+       (Check) ; dec: view scheduled for re-render
+       ())))
+
+;; ── Demo 2C: Counter — CheckActive applies updater, state advances 0 → 1 ─────
+;; m has Counter at (path 0) with Check and one queued updater (λ old. old+1).
+;; δ maps Counter to its component body.
+;; CheckActive re-evaluates body in Succ; SttReBind applies updater: 0+1=1.
+;; Queue cleared, new Smap-val=1, mode=rendered.
+
+(test-equal
+  (judgment-holds
+    (check
+      (((path 0) (view (Counter 0) (Check)
+                       (store (0 0 (((λ (old) (old + 1))
+                                     ((dummy ()) (setCount (setter 0 (path 0)))
+                                      (count 0) (props 0))))))
+                       () 0)))
+      ((Counter (λ (props)
+                  (state 0 (count setCount) 0
+                    (count (λ (dummy) (app setCount (λ (old) (old + 1)))))))))
+      (path 0)
+      μ_1 m_1 Outbuf_1)
+    
+    (μ_1
+     (Smap-val   (View-Smap (m-lookup m_1 (path 0))) 0)
+     (Smap-queue (View-Smap (m-lookup m_1 (path 0))) 0)
+     Outbuf_1))
+  '((rendered 1 () ())))
+
+;; ── Demo 3A: Local let in Init — purely lexical, does not touch Smap ─────────
+;; (let (count 0) count) in Init with empty Smap.  v = 0.
+(test-equal
+  (judgment-holds
+    (eval-view (view (Root ()) () (store) () ()) ()
+               (let (count 0) count)
+               Init (path 0) v_1 View_1 Outbuf_1)
+    (v_1 Outbuf_1))
+  '((0 ())))
+
+
+;; ── Demo 3B: Local let in Succ — ignores Smap, still gives 0 ─────────────────
+;; (let (count 0) count) in Succ with (store (0 99 ())).  v = 0, not 99.
+;; let is purely syntactic; it never reads the hook state store.
+(test-equal
+  (judgment-holds
+    (eval-view (view (Root ()) () (store (0 99 ())) () ()) ()
+               (let (count 0) count)
+               Succ (path 0) v_1 View_1 Outbuf_1)
+    (v_1 Outbuf_1))
+  '((0 ())))
+
+;; ── Demo 3C: useState in Succ — SttReBind reads 99, ignores initializer 0 ────
+;; (state 0 (count setCount) 0 count) in Succ with (store (0 99 ())).
+;; SttReBind fires: queue is empty so v_new=99; clear-hook; bind count=99; eval count.
+;; v = 99, demonstrating that useState ignores the initializer on re-render.
+(test-equal
+  (judgment-holds
+    (eval-view (view (Root ()) () (store (0 99 ())) () ()) ()
+               (state 0 (count setCount) 0 count)
+               Succ (path 0) v_1 View_1 Outbuf_1)
+    (v_1 Outbuf_1))
+  '((99 ())))
+
 (test-results)
 
+;;
+;; ============================================================
+;; FINAL DEMO DERIVATION/TRACE OUTPUTS
+;; ============================================================
+;; Each show-derivs call is commented out with #; so the file
+;; stays quiet during normal test runs.  Remove the #; prefix
+;; to print full Redex derivation trees for that demo.
+;;
+;; Variable-name conventions (all legal Redex names):
+;;   v_d1, View_d1, Outbuf_d1  — Demo 1
+;;   v_d2a, View_d2a, ...       — Demo 2A
+;;   v_d2b, m_d2b, Outbuf_d2b  — Demo 2B
+;;   μ_d2c, m_d2c, Outbuf_d2c  — Demo 2C
+;;   v_d3a, View_d3a, ...       — Demo 3 local let
+;;   v_d3c, View_d3c, ...       — Demo 3 contrast (useState)
+;; ============================================================
+
+;; ── Demo 1: set-then-read ────────────────────────────────────────────────────
+;; eval-view of (state 0 (s setS) 0 (begin (app setS (λ old. old+1)) s))
+;; in Init phase from an empty view.
+;; Expected: v=0, Smap-val(0)=0, queue=[updater], dec=(Check), Outbuf=()
+
+
+(show-derivs
+   "Demo 1: set state then read state (Init)"
+   (eval-view (view (Root ()) () (store) () ())
+              ()
+              (state 0 (s setS) 0
+                (begin (app setS (λ (old) (old + 1))) s))
+              Init
+              (path 0)
+              v_d1
+              View_d1
+              Outbuf_d1))
+
+
+
+;; ── Demo 2A: Counter initial render ─────────────────────────────────────────
+;; eval-view of Counter body in Init phase.
+;; Expected: v=(0 handler-cl), Smap-val(0)=0, queue=(), Outbuf=()
+(show-derivs
+   "Demo 2A: Counter initial render (Init / SttBind)"
+
+  
+   (eval-view (view (Counter 0) () (store) () ())
+              ((props 0))
+              (state 0 (count setCount) 0
+                (count (λ (dummy) (app setCount (λ (old) (old + 1))))))
+              Init
+              (path 0)
+              v_d2a
+              View_d2a
+              Outbuf_d2a))
+
+
+
+;; ── Demo 2B: Click event enqueues updater ────────────────────────────────────
+;; eval-mem of the handler body (app setCount (λ old. old+1)) in Normal phase.
+;; Expected: v=(), Smap-val(0)=0, queue=[updater], dec=(Check), Outbuf=()
+(show-derivs
+   "Demo 2B: Counter event handler enqueues updater (AppSet-mem)"
+   (eval-mem
+     (((path 0) (view (Counter 0) () (store (0 0 ())) () 0)))
+     ((dummy ()) (setCount (setter 0 (path 0))) (count 0) (props 0))
+     (app setCount (λ (old) (old + 1)))
+     v_d2b
+     m_d2b
+     Outbuf_d2b))
+
+;; ── Demo 2C: CheckActive applies updater, count 0 → 1 ───────────────────────
+;; check on (path 0) with δ providing Counter body.
+;; Expected: μ=rendered, Smap-val(0)=1, queue=(), Outbuf=()
+(show-derivs
+   "Demo 2C: CheckActive applies queued updater (Succ / SttReBind)"
+   (check
+     (((path 0) (view (Counter 0) (Check)
+                      (store (0 0 (((λ (old) (old + 1))
+                                    ((dummy ()) (setCount (setter 0 (path 0)))
+                                     (count 0) (props 0))))))
+                      () 0)))
+     ((Counter (λ (props)
+                 (state 0 (count setCount) 0
+                   (count (λ (dummy) (app setCount (λ (old) (old + 1)))))))))
+     (path 0)
+     μ_d2c
+     m_d2c
+     Outbuf_d2c))
+
+;; ── Demo 3A: local let in Init — store untouched ─────────────────────────────
+;; eval-view of (let (count 0) count) in Init with empty store.
+;; Expected: v=0, store unchanged, Outbuf=()
+(show-derivs
+   "Demo 3A: local let in Init (Let-view / Const-view / Var-view)"
+   (eval-view (view (Root ()) () (store) () ())
+              ()
+              (let (count 0) count)
+              Init
+              (path 0)
+              v_d3a
+              View_d3a
+              Outbuf_d3a))
+
+;; ── Demo 3B: local let in Succ — still ignores store ────────────────────────
+;; eval-view of (let (count 0) count) in Succ with store (0 99 ()).
+;; Expected: v=0 (not 99), store unchanged, Outbuf=()
+(show-derivs
+   "Demo 3B: local let in Succ — store has 99, let still returns 0"
+   (eval-view (view (Root ()) () (store (0 99 ())) () ())
+              ()
+              (let (count 0) count)
+              Succ
+              (path 0)
+              v_d3b
+              View_d3b
+              Outbuf_d3b))
+
+;; ── Demo 3C: useState in Succ — reads persisted value 99 ────────────────────
+;; eval-view of (state 0 (count setCount) 0 count) in Succ with store (0 99 ()).
+;; SttReBind fires; apply-updaters base case (empty queue); bind count=99.
+;; Expected: v=99, Outbuf=()
+(show-derivs
+   "Demo 3C: useState in Succ reads persisted value (SttReBind)"
+   (eval-view (view (Root ()) () (store (0 99 ())) () ())
+              ()
+              (state 0 (count setCount) 0 count)
+              Succ
+              (path 0)
+              v_d3c
+              View_d3c
+              Outbuf_d3c))
+
+;;
+;; ── react-step TRACES ────────────────────────────────────────────────────────
+;; `traces` is complementary to `show-derivs`:
+;;   show-derivs  = proof tree for ONE judgment (how a rule fires internally)
+;;   traces       = graph of ALL machine states react-step visits to fixpoint
+;;                  (what the whole reaction cycle looks like)
+;;
+;; All calls are commented out with #; — uncomment in DrRacket / interactive
+;; session to open the Redex GUI trace visualizer.
+;; Use apply-reduction-relation* variants below for non-GUI printable output.
+;;
+;; Initial term form: (e evq δ)
+;;   e   = starting expression
+;;   evq = event queue (empty here)
+;;   δ   = component table (empty unless Counter needed)
+;; ─────────────────────────────────────────────────────────────────────────────
+
+;; Demo 1 — set-then-read: TWO steps (StepInit, then StepCheck).
+;; StepInit fires: runs eval-view in Init, stores s=0, enqueues updater, marks Check.
+;; StepCheck fires: CheckActive applies updater, s becomes 1, queue cleared.
+;; traces shows this two-node reduction graph.
+#;(traces react-step
+   (term ((state 0 (s setS) 0
+            (begin (app setS (λ (old) (old + 1))) s))
+          ()
+          ())))
+
+;; Demo 3A — local let: ONE step only (StepInit).
+;; (let (count 0) count) never calls a setter, so dec stays () and no
+;; StepCheck follows.  traces shows a single-node graph after init.
+#;(traces react-step
+   (term ((let (count 0) count)
+          ()
+          ())))
+
+;; Demo 3C — useState no-op init: ONE step (StepInit).
+;; (state 0 (count setCount) 0 count) with an empty event queue never enqueues
+;; an updater during the init render, so no Check is marked and StepCheck does
+;; not fire.  traces graph has one node.
+#;(traces react-step
+   (term ((state 0 (count setCount) 0 count)
+          ()
+          ())))
+
+;; Demo 2 initial render only (no event, no click): ONE step (StepInit).
+;; Counter body evaluated with δ providing the component definition.
+;; No setter is called during the init render itself; Check not marked.
+#;(traces react-step
+   (term ((state 0 (count setCount) 0
+            (count (λ (dummy) (app setCount (λ (old) (old + 1))))))
+          ()
+          ((Counter (λ (props)
+                      (state 0 (count setCount) 0
+                        (count (λ (dummy)
+                                 (app setCount (λ (old) (old + 1))))))))))))
+
+;; ── Non-GUI alternatives (apply-reduction-relation*) ─────────────────────────
+;; Same semantics as traces but returns a list of fixpoint configurations
+;; rather than opening a GUI window.  Useful in terminal / CI contexts.
+
+;; Demo 1 fixpoint — should reach (t m Outbuf evq δ •) with s=1 in Smap.
+#;(for ([cfg (apply-reduction-relation* react-step
+               (term ((state 0 (s setS) 0
+                        (begin (app setS (λ (old) (old + 1))) s))
+                      ()
+                      ())))])
+   (printf "Demo 1 fixpoint:\n  ~s\n\n" cfg))
+
+;; Demo 3A fixpoint — local let, s read as 0.
+#;(for ([cfg (apply-reduction-relation* react-step
+               (term ((let (count 0) count) () ())))])
+   (printf "Demo 3A fixpoint:\n  ~s\n\n" cfg))
+
+;; Demo 3C fixpoint — useState init to 0.
+#;(for ([cfg (apply-reduction-relation* react-step
+               (term ((state 0 (count setCount) 0 count) () ())))])
+   (printf "Demo 3C fixpoint:\n  ~s\n\n" cfg))
+
+
+
+;; APPFUNC EXAMPLE
+(traces react-step
+  (term
+   ((state 0 (s1 set1) 10
+      (app (λ (x) x) 10))
+    ()   
+    ())))
+
+(define d
+  (build-derivations
+   (eval-view
+    (view (Root ()) () (store) () ())
+    ()                      
+    (app (λ (x) x) 10)
+    Init
+    (path 0)
+    10
+    (view (Root ()) () (store) () ())
+    ())))
+
+(show-derivations d)
