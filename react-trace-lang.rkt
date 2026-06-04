@@ -721,7 +721,6 @@
   )
 
 
-
 ;;
 ;; ------------------------------ CHECK
 ;;
@@ -1297,6 +1296,19 @@
                 (s1 + s2)))
            ())))
 
+
+#;(define d
+  (build-derivations
+   (eval-view
+    (view (Root ()) () (store) () ())
+    ()
+    10
+    Init
+    0
+    10
+    (view (Root ()) () (store) () ())
+    ())))
+
 ;; Ex7: counter — tree is [s, click-handler]
 #; (show "Ex7: Counter [s, click-handler]"
   (apply-reduction-relation react-step
@@ -1434,4 +1446,3 @@
 
 (test-results)
 
-;; Quick debug of remaining failures
