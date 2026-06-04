@@ -67,13 +67,13 @@
   ;; ComSpec
   (cs ::= (C v))
  
-  (x C y ::= (variable-except app eval init check hook apply-updaters state begin let if print setter view store rendered))
+  (x C y ::= (variable-except app eval init check hook apply-updaters state begin let if print setter view store rendered path))
   (l ::= natural)
   (n ::= integer)
-  (p ::= natural -)
+  (p ::= (path natural) -)
 
   (View ::= (view cs (dec ...) Smap q t))
-  (dec ::= Check Effect (dec ...)) ;; removed (dec ...), decisions are not recursive lists of decisisions?
+  (dec ::= Check Effect)
 
   ;; Smap = a store of state vars within a view
   (Smap ::= (store (l v q) ...))  
@@ -96,8 +96,8 @@
 
   (μ ::= rendered ↺ • (μ ...)) ;; "rendered" corresponds to neuron-looking thing
 
-  ;; Effect queue: ordered list of effect thunks (closures)
-      ;; WRONG; NOTE: this should be the print queue / output buffer
+
+                 
   (Outbuf ::= (v ...))
 
   ;; Render result outcome
@@ -106,43 +106,42 @@
   ;; Stable marker
   (status Stable Rerendering)
 
-  ;; Top-level configuration before StepInit: ⟨e, δ⟩
-  ;; δ is the external event queue (user events)
-      ;; note: in the paper i think this is actually the componenet definition table, and neither are things we currently use...
-      ;; since wee dont use it anywhere i shall leave for ben.
-  (δ () (δ event))
-  (event (click ι) (change ι v)) ; etc.
+  ;; External event queue (renamed from δ to avoid conflict with paper's δ)
+  (evq ::= () (evq event))
+  (event ::= (click ι) (change ι v))
 
-  ;; Allow hook to take in either input, allowing initialization
-  (hook-input ::= (e δ) (t m Outbuf δ μ)))
+  ;; Component definition table: maps component names to their body lambdas
+  (δ ::= ((C (λ (x) e)) ...))
+
+  ;; Top-level machine configurations
+  (hook-input ::= (e evq δ) (t m Outbuf evq δ μ)))
 
 (define-judgment-form React-tRace
   #:mode (hook I O)
 
   ;; "StepInit" — replaced by react-step; this version kept for reference
-  ;; Uses eval-view with a fresh root view context
   [
    (where View_root (view (Root ()) () (store) () ()))
-   (eval-view View_root () e Init 0 s View_after Outbuf)
-   (init ((0 View_after)) () s t m Outbuf_prime)
+   (eval-view View_root () e Init (path 0) s View_after Outbuf)
+   (init (((path 0) View_after)) δ s t m Outbuf_prime)
    ----------------------------------- "StepInit"
-   (hook (e δ)
-         (t m (append-Outbuf Outbuf Outbuf_prime) δ rendered))]
+   (hook (e evq δ)
+         (t m (append-Outbuf Outbuf Outbuf_prime) evq δ rendered))]
 
   ;; "StepCheck"
   [
    (check m_1 δ t μ m_2 Outbuf_2)
    ----------------------------------- "StepCheck"
-   (hook (t m_1 Outbuf_1 δ ↺)
-         (t m_2 (append-Outbuf Outbuf_1 Outbuf_2) δ μ))]
+   (hook (t m_1 Outbuf_1 evq δ ↺)
+         (t m_2 (append-Outbuf Outbuf_1 Outbuf_2) evq δ μ))]
 
   ;; "StepEvent"
   [(where (_ ... cl_handler _ ...) (handlers m_1 t))
    (where ((λ (x_arg) e_body) σ_cl) cl_handler)
    (eval-mem m_1 (env-extend σ_cl x_arg ()) e_body v m_2 Outbuf_2)
    ----------------------------------- "StepEvent"
-   (hook (t m_1 Outbuf_1 δ •)
-         (t m_2 (append-Outbuf Outbuf_1 Outbuf_2) δ ↺))]
+   (hook (t m_1 Outbuf_1 evq δ •)
+         (t m_2 (append-Outbuf Outbuf_1 Outbuf_2) evq δ ↺))]
   )
 
 
@@ -272,6 +271,27 @@
     (l_after v_after q_after) ...)])
 
 
+(define-metafunction React-tRace
+  mu-join : μ μ -> μ
+  [(mu-join rendered _)  rendered]
+  [(mu-join _ rendered)  rendered]
+  [(mu-join ↺ _)         rendered]
+  [(mu-join _ ↺)         rendered]
+  [(mu-join • •)         •])
+
+;;
+;; ------------------------------ δ-LOOKUP (component definition table)
+;;
+(define-metafunction React-tRace
+  δ-lookup : δ C -> any
+  [(δ-lookup ((C (λ (x) e)) (C_r (λ (x_r) e_r)) ...) C)
+   (λ (x) e)]
+  [(δ-lookup ((C_hd (λ (x_hd) e_hd)) (C_r (λ (x_r) e_r)) ...) C)
+   (δ-lookup ((C_r (λ (x_r) e_r)) ...) C)
+   (side-condition (not (equal? (term C_hd) (term C))))]
+  [(δ-lookup () C)
+   #f])
+
 ;;
 ;; ------------------------------ DELTA (primitive operations)
 ;;
@@ -366,6 +386,15 @@
                    ϕ p v_in v_out View_2 (append-Outbuf Outbuf_1 Outbuf_2))])
 
 
+(define-metafunction React-tRace
+  remove-dec : (dec ...) dec -> (dec ...)
+  [(remove-dec () dec) ()]
+  [(remove-dec (dec dec_rest ...) dec)
+   (dec_rest ...)]
+  [(remove-dec (dec_other dec_rest ...) dec)
+   (dec_other dec_new ...)
+   (where (dec_new ...) (remove-dec (dec_rest ...) dec))])
+
 ;; Metafunction to update view's decision
 (define-metafunction React-tRace
   update-dec : View dec -> View
@@ -408,6 +437,12 @@
 (define-metafunction React-tRace
   View-child : View -> t
   [(View-child (view cs (dec ...) Smap q t)) t])
+
+;; Replace a view's child tree, preserving all other fields (inc. dec from Succ eval)
+(define-metafunction React-tRace
+  View-set-child : View t -> View
+  [(View-set-child (view cs (dec ...) Smap q t_old) t_new)
+   (view cs (dec ...) Smap q t_new)])
 
 ;; Metafunction to get a view's decision
 (define-metafunction React-tRace
@@ -708,30 +743,54 @@
    ------------------ "CheckClos"
    (check m δ cl • m ())]
 
-  ;; CheckArray 
+  ;; CheckArray
   ;; Check each element left-to-right, threading memory through.
-  ;; Base Case: empty array
   [-------- "CheckArray-Nil"
-   (check m δ () () m ())]
+   (check m δ () • m ())]
 
-  ;; Inductive Step: Check head, then tail with updated memory
   [(check m_0 δ t_1 μ_1 m_1 Outbuf_1)
-   (check m_1 δ (t_rest ...)
-          (μ_rest ...) m_2 Outbuf_2)
+   (check m_1 δ (t_rest ...) μ_rest m_2 Outbuf_2)
+   (where μ_joined (mu-join μ_1 μ_rest))
    ------------------------------ "CheckArray-Cons"
    (check m_0 δ
           (t_1 t_rest ...)
-          (μ_1 μ_rest ...)
+          μ_joined
           m_2
           (append-Outbuf Outbuf_1 Outbuf_2))]
 
-  ;; CheckIdle
+  ;; CheckIdle: view has no Check decision — recurse on child
   [(where View (m-lookup m_1 p))
    (side-condition (not (eq? (term View) #f)))
-   (side-condition (not (member 'Check (term (View-dec View)))))
+   (side-condition (not (member (term Check) (term (View-dec View)))))
    (check m_1 δ (View-child View) μ m_2 Outbuf)
    ------------------------------- "CheckIdle"
-   (check m_1 δ p μ m_2 Outbuf)])
+   (check m_1 δ p μ m_2 Outbuf)]
+
+  ;; CheckActive: view has Check and component is in δ.
+  ;; Re-evaluates the component body in Succ phase, which triggers SttReBind
+  ;; to apply queued updater closures and clear the queue.
+  [(where View (m-lookup m_1 p))
+   (side-condition (not (equal? (term View) #f)))
+   (where (view (C_cs v_arg) (dec_a ... Check dec_b ...) Smap_0 q_0 t_0) View)
+   (where (λ (x_arg) e_body) (δ-lookup δ C_cs))
+   (where View_cleared (view (C_cs v_arg) (dec_a ... dec_b ...) Smap_0 q_0 t_0))
+   (eval-view View_cleared (env-extend () x_arg v_arg) e_body Succ p v_new View_after Outbuf_body)
+   (where View_final (View-set-child View_after v_new))
+   (where m_2 (m-update m_1 p View_final))
+   (check m_2 δ v_new μ_child m_3 Outbuf_child)
+   ------------------------------- "CheckActive"
+   (check m_1 δ p rendered m_3 (append-Outbuf Outbuf_body Outbuf_child))]
+
+  ;; CheckActive-NoLookup: view has Check but component not in δ — clear Check, recurse on old child.
+  [(where View (m-lookup m_1 p))
+   (side-condition (not (equal? (term View) #f)))
+   (where (view (C_cs v_arg) (dec_a ... Check dec_b ...) Smap_0 q_0 t_0) View)
+   (where #f (δ-lookup δ C_cs))
+   (where View_cleared (view (C_cs v_arg) (dec_a ... dec_b ...) Smap_0 q_0 t_0))
+   (where m_2 (m-update m_1 p View_cleared))
+   (check m_2 δ t_0 μ_child m_3 Outbuf_child)
+   ------------------------------- "CheckActive-NoLookup"
+   (check m_1 δ p rendered m_3 Outbuf_child)])
 
 
 ;;
@@ -742,45 +801,41 @@
    #:domain hook-input
 
    ;; StepInit: first render
-   ;; Evaluate expression in Init phase using a fresh root view View,
-   ;; then init the tree memory from the resulting ViewSpec.
-   (--> (e δ)
-        (t m_2 (append-Outbuf Outbuf Outbuf_2) δ ↺)
+   (--> (e evq δ)
+        (t m_2 (append-Outbuf Outbuf Outbuf_2) evq δ ↺)
         (where View_root (view (Root ()) () (store) () ()))
-        (where p_root 0)
+        (where p_root (path 0))
         (judgment-holds (eval-view View_root () e Init p_root s View_after Outbuf))
         (judgment-holds (init ((p_root View_after)) δ s t m_2 Outbuf_2))
         "StepInit")
 
    ;; StepCheck: process queued state updates
-   (--> (t m Outbuf δ ↺)
-        (t m_2 (append-Outbuf Outbuf Outbuf_2) δ μ)
+   (--> (t m Outbuf evq δ ↺)
+        (t m_2 (append-Outbuf Outbuf Outbuf_2) evq δ μ)
         (judgment-holds (check m δ t μ m_2 Outbuf_2))
         "StepCheck")
 
    ;; StepEvent: fire an event handler
-   ;; Picks any closure handler from the tree, calls it with unit arg,
-   ;; then enters ↺ to check for state changes.
-   (--> (t m Outbuf δ •)
-        (t m_2 (append-Outbuf Outbuf Outbuf_2) δ ↺)
+   (--> (t m Outbuf evq δ •)
+        (t m_2 (append-Outbuf Outbuf Outbuf_2) evq δ ↺)
         (where (_ ... ((λ (x_arg) e_body) σ_cl) _ ...) (handlers m t))
         (judgment-holds (eval-mem m (env-extend σ_cl x_arg ()) e_body v m_2 Outbuf_2))
         "StepEvent")))
 
-(define (run-react e δ)
-  (let ([results (apply-reduction-relation* react-step (term (,e ,δ)))])
+(define (run-react e evq δ)
+  (let ([results (apply-reduction-relation* react-step (term (,e ,evq ,δ)))])
     (cond
       [(empty? results) 'diverges]
       [(= (length results) 1) (first results)]
       [else (raise "BUG: non-deterministic!")])))
 
 #;(traces react-step
-  (term ((((λ (x_1) x_1) ()) 42) ())))
+  (term ((((λ (x_1) x_1) ()) 42) () ())))
 
-;; These should work end-to-end
-(apply-reduction-relation react-step (term (42 ())))
-(apply-reduction-relation react-step (term (true ())))
-(apply-reduction-relation react-step (term (((λ (x_1) x_1) ()) ())))
+;; These should work end-to-end  (evq=(), δ=() empty tables)
+(apply-reduction-relation react-step (term (42 () ())))
+(apply-reduction-relation react-step (term (true () ())))
+(apply-reduction-relation react-step (term (((λ (x_1) x_1) ()) () ())))
 
 ;;
 ;; ------------------------------ TESTS
@@ -831,11 +886,11 @@
 ;; Memory is non-empty but unchanged — closures don't modify memory
 (test-equal
   (judgment-holds
-    (init ((0 (view (C 42) () (store) () 42))) ()
+    (init (((path 0) (view (C 42) () (store) () 42))) ()
           ((λ (x_1) x_1) ())
           t m_2 Outbuf)
     (t m_2 Outbuf))
-  '((((λ (x_1) x_1) ()) ((0 (view (C 42) () (store) () 42))) ())))
+  '((((λ (x_1) x_1) ()) (((path 0) (view (C 42) () (store) () 42))) ())))
 
 
 ;; ---- InitArray ----
@@ -874,86 +929,86 @@
 ;; Memory doesn't matter for constants, but provide non-empty m to be safe
 (test-equal
   (judgment-holds
-    (check ((0 (view (C 42) () (store) () 42))) () 42 μ m_2 Outbuf)
+    (check (((path 0) (view (C 42) () (store) () 42))) () 42 μ m_2 Outbuf)
     (μ m_2 Outbuf))
-  '((• ((0 (view (C 42) () (store) () 42))) ())))
+  '((• (((path 0) (view (C 42) () (store) () 42))) ())))
 
 (test-equal
   (judgment-holds
-    (check ((0 (view (C 42) () (store) () 42))) () true μ m_2 Outbuf)
+    (check (((path 0) (view (C 42) () (store) () 42))) () true μ m_2 Outbuf)
     (μ m_2 Outbuf))
-  '((• ((0 (view (C 42) () (store) () 42))) ())))
+  '((• (((path 0) (view (C 42) () (store) () 42))) ())))
 
 ;; ---- CheckClos ----
 (test-equal
   (judgment-holds
-    (check ((0 (view (C 42) () (store) () 42))) ()
+    (check (((path 0) (view (C 42) () (store) () 42))) ()
            ((λ (x_1) x_1) ())
            μ m_2 Outbuf)
     (μ m_2 Outbuf))
-  '((• ((0 (view (C 42) () (store) () 42))) ())))
+  '((• (((path 0) (view (C 42) () (store) () 42))) ())))
 
 ;; ---- CheckArray-Nil ----
 (test-equal
   (judgment-holds
-    (check ((0 (view (C 42) () (store) () 42))) () (42) μ m_2 Outbuf)
+    (check (((path 0) (view (C 42) () (store) () 42))) () (42) μ m_2 Outbuf)
     (μ m_2 Outbuf))
-  '(((•) ((0 (view (C 42) () (store) () 42))) ())))
+  '((• (((path 0) (view (C 42) () (store) () 42))) ())))
 
 ;; ---- CheckArray-Cons ----
 (test-equal
   (judgment-holds
-    (check ((0 (view (C 42) () (store) () 42))) () (42) μ m_2 Outbuf)
+    (check (((path 0) (view (C 42) () (store) () 42))) () (42) μ m_2 Outbuf)
     (μ m_2 Outbuf))
-  '(((•) ((0 (view (C 42) () (store) () 42))) ())))
+  '((• (((path 0) (view (C 42) () (store) () 42))) ())))
 
 (test-equal
   (judgment-holds
-    (check ((0 (view (C 42) () (store) () 42))) () (1 2 3) μ m_2 Outbuf)
+    (check (((path 0) (view (C 42) () (store) () 42))) () (1 2 3) μ m_2 Outbuf)
     (μ m_2 Outbuf))
-  '(((• • •) ((0 (view (C 42) () (store) () 42))) ())))
+  '((• (((path 0) (view (C 42) () (store) () 42))) ())))
 
 (test-equal
   (judgment-holds
-    (check ((0 (view (C 42) () (store) () 42))) ()
+    (check (((path 0) (view (C 42) () (store) () 42))) ()
            (42 ((λ (x_1) x_1) ()))
            μ m_2 Outbuf)
     (μ m_2 Outbuf))
-  '(((• •) ((0 (view (C 42) () (store) () 42))) ())))
+  '((• (((path 0) (view (C 42) () (store) () 42))) ())))
 
 ;; ---- CheckIdle ----
 (test-equal
   (judgment-holds
-    (check ((0 (view (C 42) () (store) () 42))) ()
-           0 μ m_2 Outbuf)
+    (check (((path 0) (view (C 42) () (store) () 42))) ()
+           (path 0) μ m_2 Outbuf)
     (μ m_2 Outbuf))
-  '((• ((0 (view (C 42) () (store) () 42))) ())))
+  '((• (((path 0) (view (C 42) () (store) () 42))) ())))
 
 (test-equal
   (judgment-holds
-    (check ((0 (view (C 42) () (store) () ((λ (x_1) x_1) ())))) ()
-           0 μ m_2 Outbuf)
+    (check (((path 0) (view (C 42) () (store) () ((λ (x_1) x_1) ())))) ()
+           (path 0) μ m_2 Outbuf)
     (μ m_2 Outbuf))
-  '((• ((0 (view (C 42) () (store) () ((λ (x_1) x_1) ())))) ())))
+  '((• (((path 0) (view (C 42) () (store) () ((λ (x_1) x_1) ())))) ())))
 
 (test-equal
   (judgment-holds
-    (check ((0 (view (C 42) () (store) () 1))
-            (1 (view (C 43) () (store) () 42))) ()
-           0 μ m_2 Outbuf)
+    (check (((path 0) (view (C 42) () (store) () 1))
+            ((path 1) (view (C 43) () (store) () 42))) ()
+           (path 0) μ m_2 Outbuf)
     (μ m_2 Outbuf))
-  '((• ((0 (view (C 42) () (store) () 1))
-        (1 (view (C 43) () (store) () 42))) ())))
+  '((• (((path 0) (view (C 42) () (store) () 1))
+        ((path 1) (view (C 43) () (store) () 42))) ())))
 
 ;; ---- Handlers ----
-(test-equal (term (handlers ((0 (view (C 42) () (store) () 42))) 42)) '())
+(test-equal (term (handlers (((path 0) (view (C 42) () (store) () 42))) 42)) '())
 
 (test-equal
-  (term (handlers ((0 (view (C 42) () (store) () 42))) ((λ (x_1) x_1) ())))
+  (term (handlers (((path 0) (view (C 42) () (store) () 42))) ((λ (x_1) x_1) ())))
   '(((λ (x_1) x_1) ())))
 
 (test-equal
-  (term (handlers ((0 (view (C 42) () (store) () 42)))
+  (term (handlers (((path 0) (view (C 42) () (store) () 42)))
                   (42 ((λ (x_1) x_1) ()))))
   '(((λ (x_1) x_1) ())))
 
@@ -967,7 +1022,7 @@
   (test-equal
     (judgment-holds
       (eval-view (view (Root ()) () (store) () ()) ()
-                 expr Init 0
+                 expr Init (path 0)
                  v_1 View_1 Outbuf_1)
       (v_1 Outbuf_1))
     (list (list expected-v expected-out))))
@@ -999,7 +1054,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (let (myvar 7) (myvar + 1)) Init 0
+               (let (myvar 7) (myvar + 1)) Init (path 0)
                v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((8 ())))
@@ -1008,7 +1063,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (λ (x1) x1) Init 0 v_1 View_1 Outbuf_1)
+               (λ (x1) x1) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((((λ (x1) x1) ()) ())))
 
@@ -1016,7 +1071,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (app (λ (x1) x1) 42) Init 0 v_1 View_1 Outbuf_1)
+               (app (λ (x1) x1) 42) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((42 ())))
 
@@ -1024,7 +1079,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (app (λ (x1) (x1 + 1)) 41) Init 0 v_1 View_1 Outbuf_1)
+               (app (λ (x1) (x1 + 1)) 41) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((42 ())))
 
@@ -1032,7 +1087,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (print 99) Init 0 v_1 View_1 Outbuf_1)
+               (print 99) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((() (99))))
 
@@ -1040,7 +1095,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (begin (print 1) (print 2)) Init 0 v_1 View_1 Outbuf_1)
+               (begin (print 1) (print 2)) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((() (1 2))))
 
@@ -1053,7 +1108,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (state 0 (sv ss) 42 sv) Init 0 v_1 View_1 Outbuf_1)
+               (state 0 (sv ss) 42 sv) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((42 ())))
 
@@ -1061,7 +1116,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (state 0 (sv ss) 99 sv) Init 0 v_1 View_1 Outbuf_1)
+               (state 0 (sv ss) 99 sv) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 (Smap-val (View-Smap View_1) 0)))
   '((99 99)))
 
@@ -1069,7 +1124,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (state 0 (sv ss) 10 (sv + 5)) Init 0 v_1 View_1 Outbuf_1)
+               (state 0 (sv ss) 10 (sv + 5)) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((15 ())))
 
@@ -1077,7 +1132,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (state 0 (sv ss) 5 (begin (print sv) sv)) Init 0 v_1 View_1 Outbuf_1)
+               (state 0 (sv ss) 5 (begin (print sv) sv)) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((5 (5))))
 
@@ -1085,7 +1140,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (state 0 (bv bs) true (if bv 1 2)) Init 0 v_1 View_1 Outbuf_1)
+               (state 0 (bv bs) true (if bv 1 2)) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((1 ())))
 
@@ -1094,7 +1149,7 @@
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
                (state 0 (s1 set1) 10 (state 1 (s2 set2) 20 (s1 + s2)))
-               Init 0 v_1 View_1 Outbuf_1)
+               Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((30 ())))
 
@@ -1105,15 +1160,15 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store) () ()) ()
-               (state 0 (sv ss) 7 ss) Init 0 v_1 View_1 Outbuf_1)
+               (state 0 (sv ss) 7 ss) Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
-  '(((setter 0 0) ())))
+  '(((setter 0 (path 0)) ())))
 
 ;; SttReBind: one queued updater s -> s+1
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store (0 5 (((λ (sv) (sv + 1)) ())))) () ())
-               () (state 0 (sv ss) 0 sv) Succ 0 v_1 View_1 Outbuf_1)
+               () (state 0 (sv ss) 0 sv) Succ (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((6 ())))
 
@@ -1123,7 +1178,7 @@
     (eval-view (view (Root ()) () (store
                                     (0 0 (((λ (sv) (sv + 1)) ())
                                           ((λ (sv) (sv + 10)) ())))) () ())
-               () (state 0 (sv ss) 0 sv) Succ 0 v_1 View_1 Outbuf_1)
+               () (state 0 (sv ss) 0 sv) Succ (path 0) v_1 View_1 Outbuf_1)
     (v_1 Outbuf_1))
   '((11 ())))
 
@@ -1131,7 +1186,7 @@
 (test-equal
   (judgment-holds
     (eval-view (view (Root ()) () (store (0 5 (((λ (sv) (sv + 1)) ())))) () ())
-               () (state 0 (sv ss) 0 sv) Succ 0 v_1 View_1 Outbuf_1)
+               () (state 0 (sv ss) 0 sv) Succ (path 0) v_1 View_1 Outbuf_1)
     ((Smap-queue (View-Smap View_1) 0)))
   '((())))
 
@@ -1143,10 +1198,10 @@
                  (begin
                    (app ss (λ (old) (old + 1)))
                    sv))
-               Init 0 v_1 View_1 Outbuf_1)
+               Init (path 0) v_1 View_1 Outbuf_1)
     (v_1 (Smap-queue (View-Smap View_1) 0)))
   ;; sv = 0, setter enqueued (λ old old+1) which captures the current env
-  '((0 (((λ (old) (old + 1)) ((ss (setter 0 0)) (sv 0)))))))
+  '((0 (((λ (old) (old + 1)) ((ss (setter 0 (path 0))) (sv 0)))))))
 
 ;;
 ;; ============================================================
@@ -1168,39 +1223,68 @@
            (display (format "  phase:  ~v\n\n" μ))]
           [_ (display (format "  ~v\n\n" r))]))))
 
+
+(define (print-deriv d [indent 0])
+  (define pad (make-string indent #\space))
+  (printf "~a~a\n" pad (or (derivation-name d) "<unnamed rule>"))
+  (printf "~a  ~s\n" pad (derivation-term d))
+  (for ([sub (derivation-subs d)])
+    (print-deriv sub (+ indent 2))))
+
+(define-syntax-rule (show-derivs label judgment)
+  (begin
+    (printf "\n--- ~a ---\n" label)
+    (define ds (build-derivations judgment))
+    (if (null? ds)
+        (printf "No derivations.\n")
+        (for ([d ds])
+          (print-deriv d)))))
+
+
+#;(show-derivs
+ "SttBind derivation"
+ (eval-view (view (Root ()) () (store) () ())
+            ()
+            (state 0 (s setS) 10 s)
+            Init
+            0
+            v_out
+            View_out
+            Outbuf_out))
+
 ;; Ex1: simplest useState
-#;(show "Ex1: useState^0 42 → s"
+#;(show "Ex1: useState^0 42 → s"C
   (apply-reduction-relation react-step
     (term ((state 0 (sv ss) 42 sv) ()))))
 
 ;;(traces react-step (term ((state 0 (sv ss) 42 sv) ())))
 
 ;; Ex2: zero initial value
-(show "Ex2: useState^0 0 → s"
+#; (show "Ex2: useState^0 0 → s"
   (apply-reduction-relation react-step
     (term ((state 0 (sv ss) 0 sv) ()))))
 
 ;;(traces react-step (term ((state 0 (sv ss) 0 sv) ())))
 
 ;; Ex3: arithmetic in body
-(show "Ex3: useState^0 3 → s+1"
+#; (show "Ex3: useState^0 3 → s+1"
   (apply-reduction-relation react-step
     (term ((state 0 (sv ss) 3 (sv + 1)) ()))))
 
 #;(traces react-step (term ((state 0 (sv ss) 3 (sv + 1)) ())))
 
 ;; Ex4: print in body
-(show "Ex4: useState^0 7, print s then return s"
+#; (show "Ex4: useState^0 7, print s then return s"
   (apply-reduction-relation react-step
     (term ((state 0 (sv ss) 7 (begin (print sv) sv)) ()))))
 
 ;; Ex5: conditional on state
-(show "Ex5: useState^0 true, if s then 1 else 2"
+#; (show "Ex5: useState^0 true, if s then 1 else 2"
   (apply-reduction-relation react-step
     (term ((state 0 (bv bs) true (if bv 1 2)) ()))))
 
 ;; Ex6: two hooks
-(show "Ex6: two useState hooks, s1+s2"
+#;(show "Ex6: two useState hooks, s1+s2"
   (apply-reduction-relation react-step
     (term ((state 0 (s1 set1) 10
               (state 1 (s2 set2) 20
@@ -1226,7 +1310,7 @@
     ())))
 
 ;; Ex7: counter — tree is [s, click-handler]
-(show "Ex7: Counter [s, click-handler]"
+#; (show "Ex7: Counter [s, click-handler]"
   (apply-reduction-relation react-step
     (term ((state 0 (sv ss) 0
               (sv (λ (dummy) (app ss (λ (old) (old + 1))))))
@@ -1238,42 +1322,127 @@
 
 ;; Ex8: run-react to fixpoint
 (display "--- Ex8: run-react fixpoint ---\n")
-(display (run-react (term (state 0 (sv ss) 42 sv)) (term ())))
+(display (run-react (term (state 0 (sv ss) 42 sv)) (term ()) (term ())))
 (newline)(newline)
 
-#;(test-results)
+;;
+;; ============================================================
+;; δ-lookup UNIT TESTS
+;; ============================================================
 
+;; found
+(test-equal
+  (term (δ-lookup ((Counter (λ (props) (state 0 (s setS) 0 s)))) Counter))
+  '(λ (props) (state 0 (s setS) 0 s)))
 
+;; missing component
+(test-equal
+  (term (δ-lookup ((Counter (λ (props) (state 0 (s setS) 0 s)))) Other))
+  #f)
 
-;; EXAMPLE 2
-#;(traces react-step
-  (term
-   ((state 0 (s1 set1) 10
-      ((λ (x) x) 10))
-    ())))
+;; empty table
+(test-equal
+  (term (δ-lookup () Counter))
+  #f)
 
-#;(define d
-  (build-derivations
-   (eval-view
-    (view (Root ()) () (store) () ())
-    ((x 10))                 
-    (app (λ (x) x) 10)
-    Init
-    0
-    10
-    (view (Root ()) () (store) () ())
-    ())))
+;; two entries, look up second
+(test-equal
+  (term (δ-lookup ((Foo (λ (x) 1)) (Bar (λ (y) 2))) Bar))
+  '(λ (y) 2))
 
+;;
+;; ============================================================
+;; CheckActive (via δ) UNIT TESTS
+;; ============================================================
+;;
+;; NOTE: paths (p ::= natural) overlap with integer constants (n ::= integer),
+;; so check on a path like 0 can also fire CheckConst (treating 0 as k).
+;; These tests use test-predicate to verify the desired (rendered ...) derivation
+;; exists, without requiring it to be the only derivation.
+;;
 
-(define d
-  (build-derivations
-   (init
-    ()
-    ()
-    (1 2)
-    (1 2)
-    ()
-    ())))
+;; CheckActive: one queued updater +1, state goes from 5 to 6
+;; δ has Counter mapped to a body using useState at label 0
+(test-predicate
+  (λ (results) (and (member '(rendered 6 ()) results) #t))
+  (judgment-holds
+    (check (((path 0) (view (Counter 0) (Check)
+                            (store (0 5 (((λ (sv) (sv + 1)) ()))))
+                            () 5)))
+           ((Counter (λ (props) (state 0 (s setS) 0 s))))
+           (path 0) μ m_2 Outbuf)
+    (μ (Smap-val (View-Smap (m-lookup m_2 (path 0))) 0) Outbuf)))
 
-(show-derivations d)
+;; CheckActive: queue is cleared after applying (the rendered derivation clears it)
+(test-predicate
+  (λ (results) (and (member '(()) results) #t))
+  (judgment-holds
+    (check (((path 0) (view (Counter 0) (Check)
+                            (store (0 5 (((λ (sv) (sv + 1)) ()))))
+                            () 5)))
+           ((Counter (λ (props) (state 0 (s setS) 0 s))))
+           (path 0) μ m_2 Outbuf)
+    ((Smap-queue (View-Smap (m-lookup m_2 (path 0))) 0))))
+
+;; CheckActive: two queued updaters (+1 then +10 = 16 from 5)
+(test-predicate
+  (λ (results) (and (member '(rendered 16 ()) results) #t))
+  (judgment-holds
+    (check (((path 0) (view (Counter 0) (Check)
+                            (store (0 5 (((λ (sv) (sv + 1)) ())
+                                         ((λ (sv) (sv + 10)) ()))))
+                            () 5)))
+           ((Counter (λ (props) (state 0 (s setS) 0 s))))
+           (path 0) μ m_2 Outbuf)
+    (μ (Smap-val (View-Smap (m-lookup m_2 (path 0))) 0) Outbuf)))
+
+;; CheckActive-NoLookup: component not in δ — clears Check, returns rendered
+(test-predicate
+  (λ (results) (and (member '(rendered ()) results) #t))
+  (judgment-holds
+    (check (((path 0) (view (Unknown 0) (Check) (store (0 5 ())) () 5)))
+           ()
+           (path 0) μ m_2 Outbuf)
+    (μ Outbuf)))
+
+;; Two-hook component: CheckActive applies queued update to hook 0, hook 1 unchanged
+;; Component body: (state 0 (s1 set1) 0 (state 1 (s2 set2) 0 (s1 + s2)))
+;; Hook 0: state=3, queued (+10) → new state=13
+;; Hook 1: state=4, no queue → unchanged
+;; Body result = 13 + 4 = 17
+(test-predicate
+  (λ (results) (and (member '(rendered 13 4 ()) results) #t))
+  (judgment-holds
+    (check (((path 0) (view (TwoHook 0) (Check)
+                            (store (0 3 (((λ (s) (s + 10)) ())))
+                                   (1 4 ()))
+                            () 7)))
+           ((TwoHook (λ (props) (state 0 (s1 set1) 0 (state 1 (s2 set2) 0 (s1 + s2))))))
+           (path 0) μ m_2 Outbuf)
+    (μ (Smap-val (View-Smap (m-lookup m_2 (path 0))) 0)
+       (Smap-val (View-Smap (m-lookup m_2 (path 0))) 1)
+       Outbuf)))
+
+;;
+;; ============================================================
+;; PATH / CONSTANT DISAMBIGUATION TEST
+;; ============================================================
+;; With p ::= (path natural), integer 0 is unambiguously a constant
+;; and (path 0) is unambiguously a view reference.
+
+;; Plain integer 0 is a constant: CheckConst fires, μ = •, memory unchanged.
+(test-equal
+  (judgment-holds
+    (check (((path 0) (view (C 42) () (store) () 42))) () 0 μ m_2 Outbuf)
+    (μ m_2 Outbuf))
+  '((• (((path 0) (view (C 42) () (store) () 42))) ())))
+
+;; Tagged (path 0) looks up the view: CheckIdle fires, μ = •, recurses on child 42.
+(test-equal
+  (judgment-holds
+    (check (((path 0) (view (C 42) () (store) () 42))) () (path 0) μ m_2 Outbuf)
+    (μ m_2 Outbuf))
+  '((• (((path 0) (view (C 42) () (store) () 42))) ())))
+
+(test-results)
 
