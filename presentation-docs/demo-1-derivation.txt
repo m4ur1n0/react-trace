@@ -1,0 +1,96 @@
+SttBind
+  (eval-view
+    (view (Root ()) () (store) () ())          ; view-in:  Root, empty Smap
+    ()                                          ; σ:        empty env
+    (state 0 (s setS) 0
+      (begin (app setS (λ (old) (old + 1)))
+             s))                               ; expr
+    Init (path 0)                              ; phase, path
+    0                                          ; result-val: s = 0
+    (view (Root ()) (Check)
+      (store (0 0
+        (((λ (old) (old + 1))
+          ((setS (setter 0 (path 0))) (s 0))))))
+      () ())                                   ; view-out: Check set, updater queued
+    ())
+  Const-view
+    (eval-view
+      (view (Root ()) () (store) () ()) ()
+      0 Init (path 0) 0
+      (view (Root ()) () (store) () ()) ())
+  <unnamed rule>
+    (init-hook
+      (view (Root ()) () (store) () ())        ; view-in:  empty Smap
+      0 0                                      ; label 0, init-val 0
+      (view (Root ()) () (store (0 0 ())) () ())) ; view-out: Smap has (0 0 ())
+  <unnamed rule>
+    (bind-state
+      () s setS 0 (path 0) 0                   ; σ, var, setter-var, label, path, val
+      ((setS (setter 0 (path 0))) (s 0)))       ; result σ
+  Begin-view
+    (eval-view
+      (view (Root ()) () (store (0 0 ())) () ())
+      ((setS (setter 0 (path 0))) (s 0))        ; σ with s and setS bound
+      (begin (app setS (λ (old) (old + 1))) s)
+      Init (path 0) 0
+      (view (Root ()) (Check)
+        (store (0 0
+          (((λ (old) (old + 1))
+            ((setS (setter 0 (path 0))) (s 0))))))
+        () ())
+      ())
+    AppSet-view
+      (eval-view
+        (view (Root ()) () (store (0 0 ())) () ())
+        ((setS (setter 0 (path 0))) (s 0))
+        (app setS (λ (old) (old + 1)))
+        Init (path 0) ()                        ; result: () — setter returns ()
+        (view (Root ()) (Check)
+          (store (0 0
+            (((λ (old) (old + 1))
+              ((setS (setter 0 (path 0))) (s 0))))))
+          () ())
+        ())
+      Var-view
+        (eval-view
+          (view (Root ()) () (store (0 0 ())) () ())
+          ((setS (setter 0 (path 0))) (s 0))
+          setS Init (path 0)
+          (setter 0 (path 0))                   ; setS resolves to its setter
+          (view (Root ()) () (store (0 0 ())) () ()) ())
+      Lam-view
+        (eval-view
+          (view (Root ()) () (store (0 0 ())) () ())
+          ((setS (setter 0 (path 0))) (s 0))
+          (λ (old) (old + 1))
+          Init (path 0)
+          ((λ (old) (old + 1))                  ; result: closure over current σ
+           ((setS (setter 0 (path 0))) (s 0)))
+          (view (Root ()) () (store (0 0 ())) () ()) ())
+      <unnamed rule>
+        (enqueue-hook
+          (view (Root ()) () (store (0 0 ())) () ())  ; view-in: queue ()
+          0
+          ((λ (old) (old + 1))
+           ((setS (setter 0 (path 0))) (s 0)))        ; updater closure
+          (view (Root ()) (Check)
+            (store (0 0
+              (((λ (old) (old + 1))
+                ((setS (setter 0 (path 0))) (s 0))))))
+            () ()))                                    ; view-out: updater queued, Check set
+    Var-view
+      (eval-view
+        (view (Root ()) (Check)
+          (store (0 0
+            (((λ (old) (old + 1))
+              ((setS (setter 0 (path 0))) (s 0))))))
+          () ())
+        ((setS (setter 0 (path 0))) (s 0))
+        s Init (path 0)
+        0                                        ; s reads 0 from σ — not Smap, not queue
+        (view (Root ()) (Check)
+          (store (0 0
+            (((λ (old) (old + 1))
+              ((setS (setter 0 (path 0))) (s 0))))))
+          () ())
+        ())

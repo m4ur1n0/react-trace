@@ -7,3 +7,6 @@ racket-redex-examples
 *.txt
 *.bak
 docs
+
+!presentation-docs/demo-1-derivation.txt
+!presentation-docs/demo-2-sttrebind-deriv.txt

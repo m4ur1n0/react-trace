@@ -1,0 +1,672 @@
+; NOTE: (store (0 X (Q))) = hook label 0, value X, queue Q
+; Emphasized lines (***) are what to point at during the talk.
+
+CheckActive
+  (check
+    (((path 0) (view (Counter 0) (Check)         ; *** input: Check flag is set
+        (store (0 0
+          (((λ (old) (old + 1))
+            ((dummy ()) (setCount (setter 0 (path 0)))
+             (count 0) (props 0))))))             ; *** input: updater is in queue
+        () 0)))
+    ((Counter (λ (props)
+        (state 0 (count setCount) 0
+          (count (λ (dummy)
+            (app setCount (λ (old) (old + 1)))))))))  ; component registry
+    (path 0)
+    rendered                                       ; *** output mode: rendered
+    (((path 0) (view (Counter 0) ()
+        (store (0 1 ()))                           ; *** output: value 0→1, queue cleared
+        () (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+               ((setCount (setter 0 (path 0))) (count 1) (props 0))))))) ; new child
+    ())
+
+  SttReBind                                        ; *** NOT SttBind — this is a re-render
+    (eval-view
+      (view (Counter 0) ()
+        (store (0 0
+          (((λ (old) (old + 1))
+            ((dummy ()) (setCount (setter 0 (path 0)))
+             (count 0) (props 0))))))
+        () 0)
+      ((props 0))
+      (state 0 (count setCount) 0
+        (count (λ (dummy) (app setCount (λ (old) (old + 1))))))
+      Succ (path 0)                                ; *** Succ phase, not Init
+      (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+          ((setCount (setter 0 (path 0))) (count 1) (props 0)))) ; result child
+      (view (Counter 0) () (store (0 1 ())) () 0)  ; *** view-out: Smap now value=1
+      ())
+
+    ApplyUpdatersStep
+      (apply-updaters
+        (view (Counter 0) ()
+          (store (0 0
+            (((λ (old) (old + 1))
+              ((dummy ()) (setCount (setter 0 (path 0)))
+               (count 0) (props 0))))))
+          () 0)
+        (((λ (old) (old + 1))                      ; queue: one updater to apply
+          ((dummy ()) (setCount (setter 0 (path 0))) (count 0) (props 0))))
+        Succ (path 0)
+        0 1                                         ; *** old-val=0, new-val=1
+        (view (Counter 0) ()
+          (store (0 0
+            (((λ (old) (old + 1))
+              ((dummy ()) (setCount (setter 0 (path 0)))
+               (count 0) (props 0))))))
+          () 0)
+        ())
+      Op-view
+        (eval-view
+          (view (Counter 0) ()
+            (store (0 0
+              (((λ (old) (old + 1))
+                ((dummy ()) (setCount (setter 0 (path 0)))
+                 (count 0) (props 0))))))
+            () 0)
+          ((old 0) (dummy ()) (setCount (setter 0 (path 0))) (count 0) (props 0))
+          (old + 1)                                 ; *** the updater body
+          Succ (path 0)
+          1                                         ; *** 0+1 = 1
+          (view (Counter 0) ()
+            (store (0 0
+              (((λ (old) (old + 1))
+                ((dummy ()) (setCount (setter 0 (path 0)))
+                 (count 0) (props 0))))))
+            () 0)
+          ())
+        Var-view
+          (eval-view
+            (view (Counter 0) ()
+              (store (0 0
+                (((λ (old) (old + 1))
+                  ((dummy ()) (setCount (setter 0 (path 0)))
+                   (count 0) (props 0))))))
+              () 0)
+            ((old 0) (dummy ()) (setCount (setter 0 (path 0))) (count 0) (props 0))
+            old Succ (path 0)
+            0                                       ; old = 0 from σ
+            (view (Counter 0) ()
+              (store (0 0
+                (((λ (old) (old + 1))
+                  ((dummy ()) (setCount (setter 0 (path 0)))
+                   (count 0) (props 0))))))
+              () 0)
+            ())
+        Const-view
+          (eval-view
+            (view (Counter 0) ()
+              (store (0 0
+                (((λ (old) (old + 1))
+                  ((dummy ()) (setCount (setter 0 (path 0)))
+                   (count 0) (props 0))))))
+              () 0)
+            ((old 0) (dummy ()) (setCount (setter 0 (path 0))) (count 0) (props 0))
+            1 Succ (path 0) 1
+            (view (Counter 0) ()
+              (store (0 0
+                (((λ (old) (old + 1))
+                  ((dummy ()) (setCount (setter 0 (path 0)))
+                   (count 0) (props 0))))))
+              () 0)
+            ())
+      ApplyUpdatersDone
+        (apply-updaters
+          (view (Counter 0) ()
+            (store (0 0
+              (((λ (old) (old + 1))
+                ((dummy ()) (setCount (setter 0 (path 0)))
+                 (count 0) (props 0))))))
+            () 0)
+          ()                                        ; *** queue now empty
+          Succ (path 0)
+          1 1                                       ; old-val=1, new-val=1 (converged)
+          (view (Counter 0) ()
+            (store (0 0
+              (((λ (old) (old + 1))
+                ((dummy ()) (setCount (setter 0 (path 0)))
+                 (count 0) (props 0))))))
+            () 0)
+          ())
+
+    <unnamed rule>
+      (clear-hook
+        (view (Counter 0) ()
+          (store (0 0
+            (((λ (old) (old + 1))
+              ((dummy ()) (setCount (setter 0 (path 0)))
+               (count 0) (props 0))))))
+          () 0)
+        0 1                                         ; *** label 0: write value=1, clear queue
+        (view (Counter 0) () (store (0 1 ())) () 0))
+
+    <unnamed rule>
+      (bind-state
+        ((props 0)) count setCount 0 (path 0)
+        1                                           ; *** count now bound to 1 in σ
+        ((setCount (setter 0 (path 0))) (count 1) (props 0)))
+
+    Array-Cons-view
+      (eval-view
+        (view (Counter 0) () (store (0 1 ())) () 0)
+        ((setCount (setter 0 (path 0))) (count 1) (props 0))
+        (count (λ (dummy) (app setCount (λ (old) (old + 1)))))
+        Succ (path 0)
+        (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+            ((setCount (setter 0 (path 0))) (count 1) (props 0)))) ; *** child: count=1 + new handler
+        (view (Counter 0) () (store (0 1 ())) () 0)
+        ())
+      Var-view
+        (eval-view
+          (view (Counter 0) () (store (0 1 ())) () 0)
+          ((setCount (setter 0 (path 0))) (count 1) (props 0))
+          count Succ (path 0)
+          1                                         ; *** count = 1
+          (view (Counter 0) () (store (0 1 ())) () 0) ())
+      Array-Cons-view
+        (eval-view
+          (view (Counter 0) () (store (0 1 ())) () 0)
+          ((setCount (setter 0 (path 0))) (count 1) (props 0))
+          ((λ (dummy) (app setCount (λ (old) (old + 1)))))
+          Succ (path 0)
+          (((λ (dummy) (app setCount (λ (old) (old + 1))))
+            ((setCount (setter 0 (path 0))) (count 1) (props 0)))) ; *** new handler captures count=1
+          (view (Counter 0) () (store (0 1 ())) () 0) ())
+        Lam-view
+          (eval-view
+            (view (Counter 0) () (store (0 1 ())) () 0)
+            ((setCount (setter 0 (path 0))) (count 1) (props 0))
+            (λ (dummy) (app setCount (λ (old) (old + 1))))
+            Succ (path 0)
+            ((λ (dummy) (app setCount (λ (old) (old + 1))))
+             ((setCount (setter 0 (path 0))) (count 1) (props 0))) ; closure
+            (view (Counter 0) () (store (0 1 ())) () 0) ())
+        Const-view
+          (eval-view
+            (view (Counter 0) () (store (0 1 ())) () 0)
+            ((setCount (setter 0 (path 0))) (count 1) (props 0))
+            () Succ (path 0) ()
+            (view (Counter 0) () (store (0 1 ())) () 0) ())
+
+  CheckArray-Cons
+    (check
+      (((path 0) (view (Counter 0) ()
+          (store (0 1 ()))
+          () (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+                 ((setCount (setter 0 (path 0))) (count 1) (props 0)))))))
+      ((Counter (λ (props)
+          (state 0 (count setCount) 0
+            (count (λ (dummy) (app setCount (λ (old) (old + 1)))))))))
+      (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+          ((setCount (setter 0 (path 0))) (count 1) (props 0))))  ; walk child tree
+      •
+      (((path 0) (view (Counter 0) ()
+          (store (0 1 ()))
+          () (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+                 ((setCount (setter 0 (path 0))) (count 1) (props 0)))))))
+      ())
+    CheckConst
+      (check ... 1 • ...) ; *** the count value 1 is a plain constant → no action
+    CheckArray-Cons
+      (check ... (((λ (dummy) ...) ...)) • ...) ; walk rest of child
+      CheckClos
+        (check ... ((λ (dummy) ...) ...) • ...) ; *** handler closure → no action (not a component)
+      CheckConst
+        (check ... () • ...) ; nil tail → done
+
+
+
+███╗   ███╗ █████╗ ██████╗ ██╗  ██╗███████╗██████╗     ██╗   ██╗██████╗  
+████╗ ████║██╔══██╗██╔══██╗██║ ██╔╝██╔════╝██╔══██╗    ██║   ██║██╔══██╗ 
+██╔████╔██║███████║██████╔╝█████╔╝ █████╗  ██║  ██║    ██║   ██║██████╔╝ 
+██║╚██╔╝██║██╔══██║██╔══██╗██╔═██╗ ██╔══╝  ██║  ██║    ██║   ██║██╔═══╝  
+██║ ╚═╝ ██║██║  ██║██║  ██║██║  ██╗███████╗██████╔╝    ╚██████╔╝██║      
+╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═════╝      ╚═════╝ ╚═╝      
+                                                                                                                                   
+   ██╗   ██╗███████╗██████╗ ███████╗██╗ ██████╗ ███╗   ██╗
+   ██║   ██║██╔════╝██╔══██╗██╔════╝██║██╔═══██╗████╗  ██║
+   ██║   ██║█████╗  ██████╔╝███████╗██║██║   ██║██╔██╗ ██║
+   ╚██╗ ██╔╝██╔══╝  ██╔══██╗╚════██║██║██║   ██║██║╚██╗██║
+    ╚████╔╝ ███████╗██║  ██║███████║██║╚██████╔╝██║ ╚████║
+     ╚═══╝  ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝
+
+; ============================================================
+; Demo 2C: CheckActive + SttReBind Path
+; ============================================================
+;
+; Meaning of a hook-store row:
+;   (store (0 X Q))
+;      0 = hook label
+;      X = current persistent state value
+;      Q = queued updater closures
+;
+; Big picture:
+;   The event phase queued one updater and marked the Counter view with Check.
+;   Now check sees Check, re-renders the component in Succ phase, applies
+;   the queued updater, clears the queue, and produces a new child with count=1.
+
+CheckActive
+  (check
+    (((path 0) (view (Counter 0) (Check)
+        ; Input view is marked Check, so CheckActive fires.
+
+        (store (0 0
+          (((λ (old) (old + 1))
+            ((dummy ()) (setCount (setter 0 (path 0)))
+             (count 0) (props 0))))))
+        ; Input hook store:
+        ;   label 0
+        ;   current value 0
+        ;   queue contains one updater closure: old ↦ old + 1
+
+        () 0)))
+        ; Old child is still 0 before the rerender.
+
+    ((Counter (λ (props)
+        (state 0 (count setCount) 0
+          (count (λ (dummy)
+            (app setCount (λ (old) (old + 1)))))))))
+    ; Component registry δ:
+    ;   Counter maps to the component body.
+    ; CheckActive uses this to re-evaluate Counter in Succ phase.
+
+    (path 0)
+
+    rendered
+    ; Output mode:
+    ;   rendered means a rerender happened during check.
+
+    (((path 0) (view (Counter 0) ()
+        ; Check has been removed after the rerender.
+
+        (store (0 1 ()))
+        ; Output hook store:
+        ;   label 0
+        ;   value updated from 0 to 1
+        ;   queue cleared to ()
+
+        ()
+        (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+               ((setCount (setter 0 (path 0))) (count 1) (props 0)))))))
+        ; New child:
+        ;   visible count is now 1
+        ;   new handler closure captures count=1
+
+    ())
+    ; No print output.
+
+  SttReBind
+    ; This is the key rule for useState on a subsequent render.
+    ; It is NOT SttBind. SttBind initializes; SttReBind reads existing Smap state.
+
+    (eval-view
+      (view (Counter 0) ()
+        (store (0 0
+          (((λ (old) (old + 1))
+            ((dummy ()) (setCount (setter 0 (path 0)))
+             (count 0) (props 0))))))
+        () 0)
+      ; View entering the Succ render:
+      ;   Check already cleared
+      ;   stored value still 0
+      ;   queue still contains updater
+
+      ((props 0))
+      ; Component argument environment.
+
+      (state 0 (count setCount) 0
+        (count (λ (dummy) (app setCount (λ (old) (old + 1))))))
+      ; Re-evaluating the Counter body.
+
+      Succ (path 0)
+      ; Succ phase:
+      ;   useState reads from Smap and applies queued updates.
+      ;   It does not reinitialize from e_init = 0.
+
+      (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+          ((setCount (setter 0 (path 0))) (count 1) (props 0))))
+      ; Result child after rerender:
+      ;   count value is now 1
+      ;   handler closure captures count=1
+
+      (view (Counter 0) () (store (0 1 ())) () 0)
+      ; View after SttReBind:
+      ;   hook store has value 1
+      ;   queue is cleared
+
+      ())
+
+    ApplyUpdatersStep
+      ; Apply the first queued updater closure to the old state value.
+
+      (apply-updaters
+        (view (Counter 0) ()
+          (store (0 0
+            (((λ (old) (old + 1))
+              ((dummy ()) (setCount (setter 0 (path 0)))
+               (count 0) (props 0))))))
+          () 0)
+
+        (((λ (old) (old + 1))
+          ((dummy ()) (setCount (setter 0 (path 0))) (count 0) (props 0))))
+        ; Queue has exactly one updater closure.
+
+        Succ (path 0)
+
+        0 1
+        ; Input state value is 0.
+        ; Output state value after this updater is 1.
+
+        (view (Counter 0) ()
+          (store (0 0
+            (((λ (old) (old + 1))
+              ((dummy ()) (setCount (setter 0 (path 0)))
+               (count 0) (props 0))))))
+          () 0)
+
+        ())
+
+      Op-view
+        ; Evaluate updater body:
+        ;   (old + 1)
+
+        (eval-view
+          (view (Counter 0) ()
+            (store (0 0
+              (((λ (old) (old + 1))
+                ((dummy ()) (setCount (setter 0 (path 0)))
+                 (count 0) (props 0))))))
+            () 0)
+
+          ((old 0) (dummy ()) (setCount (setter 0 (path 0))) (count 0) (props 0))
+          ; Updater environment:
+          ;   old is bound to the current state value 0.
+          ;   the rest is the captured handler environment.
+
+          (old + 1)
+          ; Updater body.
+
+          Succ (path 0)
+
+          1
+          ; Result of old + 1.
+
+          (view (Counter 0) ()
+            (store (0 0
+              (((λ (old) (old + 1))
+                ((dummy ()) (setCount (setter 0 (path 0)))
+                 (count 0) (props 0))))))
+            () 0)
+
+          ())
+
+        Var-view
+          ; Evaluate left side of old + 1.
+
+          (eval-view
+            (view (Counter 0) ()
+              (store (0 0
+                (((λ (old) (old + 1))
+                  ((dummy ()) (setCount (setter 0 (path 0)))
+                   (count 0) (props 0))))))
+              () 0)
+
+            ((old 0) (dummy ()) (setCount (setter 0 (path 0))) (count 0) (props 0))
+
+            old
+
+            Succ (path 0)
+
+            0
+            ; old = 0 from the updater environment σ.
+
+            (view (Counter 0) ()
+              (store (0 0
+                (((λ (old) (old + 1))
+                  ((dummy ()) (setCount (setter 0 (path 0)))
+                   (count 0) (props 0))))))
+              () 0)
+
+            ())
+
+        Const-view
+          ; Evaluate right side of old + 1.
+
+          (eval-view
+            (view (Counter 0) ()
+              (store (0 0
+                (((λ (old) (old + 1))
+                  ((dummy ()) (setCount (setter 0 (path 0)))
+                   (count 0) (props 0))))))
+              () 0)
+
+            ((old 0) (dummy ()) (setCount (setter 0 (path 0))) (count 0) (props 0))
+
+            1
+
+            Succ (path 0)
+
+            1
+            ; Constant 1 evaluates to itself.
+
+            (view (Counter 0) ()
+              (store (0 0
+                (((λ (old) (old + 1))
+                  ((dummy ()) (setCount (setter 0 (path 0)))
+                   (count 0) (props 0))))))
+              () 0)
+
+            ())
+
+      ApplyUpdatersDone
+        ; No more updater closures remain after the first one.
+
+        (apply-updaters
+          (view (Counter 0) ()
+            (store (0 0
+              (((λ (old) (old + 1))
+                ((dummy ()) (setCount (setter 0 (path 0)))
+                 (count 0) (props 0))))))
+            () 0)
+
+          ()
+          ; Queue tail is empty.
+
+          Succ (path 0)
+
+          1 1
+          ; Current accumulated value is 1.
+          ; Final value remains 1.
+
+          (view (Counter 0) ()
+            (store (0 0
+              (((λ (old) (old + 1))
+                ((dummy ()) (setCount (setter 0 (path 0)))
+                 (count 0) (props 0))))))
+            () 0)
+
+          ())
+
+    <unnamed rule>
+      ; clear-hook writes the computed state value and clears the queue.
+
+      (clear-hook
+        (view (Counter 0) ()
+          (store (0 0
+            (((λ (old) (old + 1))
+              ((dummy ()) (setCount (setter 0 (path 0)))
+               (count 0) (props 0))))))
+          () 0)
+
+        0 1
+        ; Hook label 0 gets new value 1.
+
+        (view (Counter 0) () (store (0 1 ())) () 0))
+        ; Queue is now empty.
+
+    <unnamed rule>
+      ; bind-state binds the new state value and setter into σ for the body.
+
+      (bind-state
+        ((props 0))
+
+        count setCount
+
+        0 (path 0)
+
+        1
+        ; New local count binding gets value 1.
+
+        ((setCount (setter 0 (path 0))) (count 1) (props 0)))
+        ; New render environment:
+        ;   setCount points to same hook/path
+        ;   count is now 1
+        ;   props is unchanged
+
+    Array-Cons-view
+      ; Evaluate the component body result:
+      ;   (count handler)
+      ; This constructs the new child tree.
+
+      (eval-view
+        (view (Counter 0) () (store (0 1 ())) () 0)
+
+        ((setCount (setter 0 (path 0))) (count 1) (props 0))
+
+        (count (λ (dummy) (app setCount (λ (old) (old + 1)))))
+
+        Succ (path 0)
+
+        (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+            ((setCount (setter 0 (path 0))) (count 1) (props 0))))
+        ; New child:
+        ;   first element is count = 1
+        ;   second element is a new handler closure
+
+        (view (Counter 0) () (store (0 1 ())) () 0)
+
+        ())
+
+      Var-view
+        ; Evaluate first child element: count.
+
+        (eval-view
+          (view (Counter 0) () (store (0 1 ())) () 0)
+
+          ((setCount (setter 0 (path 0))) (count 1) (props 0))
+
+          count
+
+          Succ (path 0)
+
+          1
+          ; count = 1 from the newly-bound render environment.
+
+          (view (Counter 0) () (store (0 1 ())) () 0)
+
+          ())
+
+      Array-Cons-view
+        ; Evaluate the rest of the child list:
+        ;   one handler closure.
+
+        (eval-view
+          (view (Counter 0) () (store (0 1 ())) () 0)
+
+          ((setCount (setter 0 (path 0))) (count 1) (props 0))
+
+          ((λ (dummy) (app setCount (λ (old) (old + 1)))))
+
+          Succ (path 0)
+
+          (((λ (dummy) (app setCount (λ (old) (old + 1))))
+            ((setCount (setter 0 (path 0))) (count 1) (props 0))))
+          ; The list tail contains one closure.
+
+          (view (Counter 0) () (store (0 1 ())) () 0)
+
+          ())
+
+        Lam-view
+          ; Create the new click-handler closure.
+
+          (eval-view
+            (view (Counter 0) () (store (0 1 ())) () 0)
+
+            ((setCount (setter 0 (path 0))) (count 1) (props 0))
+
+            (λ (dummy) (app setCount (λ (old) (old + 1))))
+
+            Succ (path 0)
+
+            ((λ (dummy) (app setCount (λ (old) (old + 1))))
+             ((setCount (setter 0 (path 0))) (count 1) (props 0)))
+            ; New handler closure captures count=1.
+
+            (view (Counter 0) () (store (0 1 ())) () 0)
+
+            ())
+
+        Const-view
+          ; Empty list tail of the child list.
+
+          (eval-view
+            (view (Counter 0) () (store (0 1 ())) () 0)
+
+            ((setCount (setter 0 (path 0))) (count 1) (props 0))
+
+            ()
+
+            Succ (path 0)
+
+            ()
+
+            (view (Counter 0) () (store (0 1 ())) () 0)
+
+            ())
+
+  CheckArray-Cons
+    ; After rerendering the component, check walks the returned child tree.
+    ; The child contains a plain value and a closure, not nested components.
+
+    (check
+      (((path 0) (view (Counter 0) ()
+          (store (0 1 ()))
+          () (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+                 ((setCount (setter 0 (path 0))) (count 1) (props 0)))))))
+
+      ((Counter (λ (props)
+          (state 0 (count setCount) 0
+            (count (λ (dummy) (app setCount (λ (old) (old + 1)))))))))
+
+      (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+          ((setCount (setter 0 (path 0))) (count 1) (props 0))))
+      ; Child tree being checked.
+
+      •
+
+      (((path 0) (view (Counter 0) ()
+          (store (0 1 ()))
+          () (1 ((λ (dummy) (app setCount (λ (old) (old + 1))))
+                 ((setCount (setter 0 (path 0))) (count 1) (props 0)))))))
+
+      ())
+
+    CheckConst
+      (check ... 1 • ...)
+      ; The visible count value 1 is just a constant.
+      ; No rerender action needed.
+
+    CheckArray-Cons
+      (check ... (((λ (dummy) ...) ...)) • ...)
+      ; Continue checking the rest of the child list.
+
+      CheckClos
+        (check ... ((λ (dummy) ...) ...) • ...)
+        ; The handler closure is not a component path.
+        ; No rerender action needed.
+
+      CheckConst
+        (check ... () • ...)
+        ; Empty tail: done.
